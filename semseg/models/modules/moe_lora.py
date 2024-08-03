@@ -795,6 +795,241 @@ class MoE_lora_new(nn.Module):
         return final_diff_outputs, shared_mean_tensor, total_loss
 
 
+class AttentionFusion(nn.Module):
+    def __init__(self, in_channels, inter_channels=None):
+        super(AttentionFusion, self).__init__()
+        if inter_channels is None:
+            inter_channels = in_channels
+
+        self.rgb_conv = nn.Conv2d(in_channels, inter_channels, kernel_size=1)
+        self.shared_conv = nn.Conv2d(in_channels, inter_channels, kernel_size=1)
+        self.fusion_conv = nn.Conv2d(inter_channels, in_channels, kernel_size=1)
+
+        self.softmax = nn.Softmax(dim=1)
+
+    def forward(self, rgb, shared):
+        rgb_proj = self.rgb_conv(rgb)
+        shared_proj = self.shared_conv(shared)
+
+        attention_map = self.softmax(rgb_proj + shared_proj)
+        fused_tensor = attention_map * rgb + (1 - attention_map) * shared
+
+        return self.fusion_conv(fused_tensor)
+
+
+class MoE_lora_rgb(nn.Module):
+
+    """Call a Sparsely gated mixture of experts layer with 1-layer Feed-Forward networks as experts.
+    Args:
+    input_size: integer - size of the input
+    output_size: integer - size of the input
+    num_experts: an integer - number of experts
+    hidden_size: an integer - hidden size of the experts
+    noisy_gating: a boolean
+    k: an integer - how many experts to use for each batch element
+    """
+
+    def __init__(self, c1, c2, patch_size, stride, padding, num_experts, width, noisy_gating=True, k=2):
+        super(MoE_lora_rgb, self).__init__()
+        self.noisy_gating = noisy_gating
+        self.num_experts = num_experts
+        self.c11 = c1
+        self.c21 = c2
+        self.patch_size1 = patch_size
+        self.width = width
+        self.stride1 = stride
+        self.padding1 = padding
+        self.k = k
+        # instantiate experts
+        self.experts = nn.ModuleList([Mlp_lowrank(self.c11, self.c21, self.patch_size1, self.stride1, self.padding1) for i in range(self.num_experts)])
+        self.shared_expert = Mlp_lowrank(self.c11, self.c21, self.patch_size1, self.stride1, self.padding1)
+        self.fusion_module = AttentionFusion(c2)
+        self.w_gate = nn.Parameter(torch.zeros(self.width, num_experts), requires_grad=True)
+        self.w_noise = nn.Parameter(torch.zeros(self.width, num_experts), requires_grad=True)
+
+        self.softplus = nn.Softplus()
+        self.softmax = nn.Softmax(1)
+        self.register_buffer("mean", torch.tensor([0.0]))
+        self.register_buffer("std", torch.tensor([1.0]))
+        assert(self.k <= self.num_experts)
+
+    def cv_squared(self, x):
+        """The squared coefficient of variation of a sample.
+        Useful as a loss to encourage a positive distribution to be more uniform.
+        Epsilons added for numerical stability.
+        Returns 0 for an empty Tensor.
+        Args:
+        x: a `Tensor`.
+        Returns:
+        a `Scalar`.
+        """
+        eps = 1e-10
+        # if only num_experts = 1
+
+        if x.shape[0] == 1:
+            return torch.tensor([0], device=x.device, dtype=x.dtype)
+        return x.float().var() / (x.float().mean()**2 + eps)
+
+    def _gates_to_load(self, gates):
+        """Compute the true load per expert, given the gates.
+        The load is the number of examples for which the corresponding gate is >0.
+        Args:
+        gates: a `Tensor` of shape [batch_size, n]
+        Returns:
+        a float32 `Tensor` of shape [n]
+        """
+        return (gates > 0).sum(0)
+
+    def _prob_in_top_k(self, clean_values, noisy_values, noise_stddev, noisy_top_values):
+        """Helper function to NoisyTopKGating.
+        Computes the probability that value is in top k, given different random noise.
+        This gives us a way of backpropagating from a loss that balances the number
+        of times each expert is in the top k experts per example.
+        In the case of no noise, pass in None for noise_stddev, and the result will
+        not be differentiable.
+        Args:
+        clean_values: a `Tensor` of shape [batch, n].
+        noisy_values: a `Tensor` of shape [batch, n].  Equal to clean values plus
+          normally distributed noise with standard deviation noise_stddev.
+        noise_stddev: a `Tensor` of shape [batch, n], or None
+        noisy_top_values: a `Tensor` of shape [batch, m].
+           "values" Output of tf.top_k(noisy_top_values, m).  m >= k+1
+        Returns:
+        a `Tensor` of shape [batch, n].
+        """
+        batch = clean_values.size(0)
+        m = noisy_top_values.size(1)
+        top_values_flat = noisy_top_values.flatten()
+
+        threshold_positions_if_in = torch.arange(batch, device=clean_values.device) * m + self.k
+        threshold_if_in = torch.unsqueeze(torch.gather(top_values_flat, 0, threshold_positions_if_in), 1)
+        is_in = torch.gt(noisy_values, threshold_if_in)
+        threshold_positions_if_out = threshold_positions_if_in - 1
+        threshold_if_out = torch.unsqueeze(torch.gather(top_values_flat, 0, threshold_positions_if_out), 1)
+        # is each value currently in the top k.
+        normal = Normal(self.mean, self.std)
+        prob_if_in = normal.cdf((clean_values - threshold_if_in)/noise_stddev)
+        prob_if_out = normal.cdf((clean_values - threshold_if_out)/noise_stddev)
+        prob = torch.where(is_in, prob_if_in, prob_if_out)
+        return prob
+
+    def noisy_top_k_gating(self, x, train, noise_epsilon=1e-2):
+        """Noisy top-k gating.
+          See paper: https://arxiv.org/abs/1701.06538.
+          Args:
+            x: input Tensor with shape [batch_size, input_size]
+            train: a boolean - we only add noise at training time.
+            noise_epsilon: a float
+          Returns:
+            gates: a Tensor with shape [batch_size, num_experts]
+            load: a Tensor with shape [num_experts]
+        """
+
+        x_mean = torch.mean(x, dim=-1).mean(dim=1)
+        # x_flat = x.reshape(x.shape[0], self.ch*self.width*self.height)
+        # x_mean = torch.mean(x_mean, dim=-1)
+        # z_mean = torch.mean(z, dim=-1)
+        # gate_1 = self.shared_expert(x).mean(dim=-1).mean(dim=1)
+        # print(gate_1.shape)
+
+        clean_logits = x_mean @ self.w_gate
+
+        if self.noisy_gating and train:
+            raw_noise_stddev = x_mean @ self.w_noise
+            noise_stddev = ((self.softplus(raw_noise_stddev) + noise_epsilon))
+            noisy_logits = clean_logits + (torch.randn_like(clean_logits) * noise_stddev)
+            logits = noisy_logits
+        else:
+            logits = clean_logits
+
+        # calculate topk + 1 that will be needed for the noisy gates
+        logits = self.softmax(logits)
+        top_logits, top_indices = logits.topk(min(self.k + 1, self.num_experts), dim=1)
+        top_k_logits = top_logits[:, :self.k]
+        top_k_indices = top_indices[:, :self.k]
+        top_k_gates = top_k_logits / (top_k_logits.sum(1, keepdim=True) + 1e-6)  # normalization
+        # self.logits = top_k_logits
+        # self.act =  nn.GELU()
+
+        zeros = torch.zeros_like(logits, requires_grad=True)
+        gates = zeros.scatter(1, top_k_indices, top_k_gates)
+
+        if self.noisy_gating and self.k < self.num_experts and train:
+            load = (self._prob_in_top_k(clean_logits, noisy_logits, noise_stddev, top_logits)).sum(0)
+        else:
+            load = self._gates_to_load(gates)
+        return gates, load, self.softmax(logits), top_k_logits
+
+    def compute_symmetric_kl_loss(self, p, q):
+        """
+        Compute the symmetric KL divergence between two distributions.
+        Args:
+            p: Log probabilities of the first distribution.
+            q: Probabilities of the second distribution.
+        Returns:
+            Symmetric KL divergence.
+        """
+        kl_pq = F.kl_div(p, q, reduction='batchmean')
+        kl_qp = F.kl_div(F.log_softmax(q, dim=-1), F.softmax(p, dim=-1), reduction='batchmean')
+        return kl_pq + kl_qp
+
+
+
+    def forward(self, xs, loss_coef=1e-2):
+        total_expert_loss = 0
+        total_loss = 0
+        final_shared_outputs = []
+        final_diff_outputs = []
+        for x in xs:
+
+            gates, load, logits, top_k_logits = self.noisy_top_k_gating(x, self.training)
+
+            importance = gates.sum(0)
+            loss = self.cv_squared(importance) + self.cv_squared(load)
+            loss *= loss_coef
+            total_expert_loss += loss
+
+            dispatcher = SparseDispatcher(self.num_experts, gates)
+            shared_x = self.shared_expert(x)
+
+            expert_inputs_x = dispatcher.dispatch(x)
+
+            # gates = dispatcher.expert_to_gates()
+
+            expert_outputs_x = [self.experts[i](expert_inputs_x[i]) for i in range(self.num_experts)]
+
+            x_res = dispatcher.combine(expert_outputs_x, top_k_logits)
+
+
+            final_diff_outputs.append(x_res)
+            final_shared_outputs.append(shared_x)
+
+        shared_stacked_tensor = torch.stack(final_shared_outputs)
+        shared_mean_tensor = torch.mean(shared_stacked_tensor, dim=0)
+
+        shared_tensor = self.fusion_module(final_diff_outputs[0], shared_mean_tensor)
+
+        # Compute uniformity loss (mean squared error between shared and individual features)
+        uniformity_loss = 0
+        for diff_output in final_diff_outputs:
+            uniformity_loss += F.mse_loss(shared_mean_tensor, diff_output)
+
+        # Compute distinctiveness loss (KL divergence between individual features)
+        distinctiveness_loss = 0
+        for i in range(len(final_diff_outputs)):
+            for j in range(i + 1, len(final_diff_outputs)):
+                p = F.log_softmax(final_diff_outputs[i].view(final_diff_outputs[i].size(0), -1), dim=-1)
+                q = F.softmax(final_diff_outputs[j].view(final_diff_outputs[j].size(0), -1), dim=-1)
+                distinctiveness_loss += self.compute_symmetric_kl_loss(p, q)
+
+        # Ensure total_loss is non-negative and balanced
+        total_loss += uniformity_loss + 0.1 * distinctiveness_loss + total_expert_loss
+
+
+
+        return final_diff_outputs, shared_tensor, total_loss
+
+
 
 class AttentionWeightedSum(nn.Module):
     def __init__(self):
@@ -1065,14 +1300,14 @@ if "__main__"==__name__:
     # moe_instance = AllInOne_lora(64, 64, 3, 2, 2, 3//2, 6, 256, True, 2)
     # moe_instance = AllInOne_lora(128, 160, 3, 2, 2, 3//2, 6, 128, True, 2)
     # moe_instance = AllInOne_lora(320, 256, 3, 2, 2, 3//2, 6, 64, True, 2)
-    moe_instance = MoE_lora_new(3, 64, 7, 4, 7//2, 6, 1024, True, 2)
+    moe_instance = MoE_lora_rgb(3, 64, 7, 4, 7//2, 6, 1024, True, 2)
 
     # tensor_1 = torch.randn(1, 3, 1024, 1024)
     # tensor_2 = torch.randn(1, 3, 1024, 1024)
     # tensor_3 = torch.randn(1, 3, 1024, 1024)
     # tensor_4 = torch.randn(1, 3, 1024, 1024)
 
-    tensor_1 = [torch.ones(2, 3, 1024, 1024), torch.ones(2, 3, 1024, 1024)*2, torch.ones(2, 3, 1024, 1024) *3]
+    tensor_1 = [torch.ones(2, 3, 1024, 1024), torch.ones(2, 3, 1024, 1024)*4, torch.ones(2, 3, 1024, 1024)*2, torch.ones(2, 3, 1024, 1024) *3]
     # tensor_1 = [torch.ones(2, 64, 256, 256), torch.ones(2, 64, 256, 256) * 2, torch.ones(2, 64, 256, 256) * 3]
     # tensor_1 = [torch.ones(2, 128, 128, 128), torch.ones(2, 128, 128, 128) * 2, torch.ones(2, 128, 128, 128) * 3]
     # tensor_1 = [torch.ones(2, 320, 64, 64), torch.ones(2, 320, 64, 64) * 2, torch.ones(2, 320, 64, 64) * 3]
