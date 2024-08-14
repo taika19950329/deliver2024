@@ -618,9 +618,9 @@ class CMNeXt(nn.Module):
 
 
 if __name__ == '__main__':
-    modals = ['img', 'depth', 'event', 'lidar']
+    modals = ['depth', 'event', 'lidar']
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    x = [torch.zeros(2, 3, 1024, 1024), torch.ones(2, 3, 1024, 1024), (torch.ones(2, 3, 1024, 1024) * 2),
+    x = [torch.ones(2, 3, 1024, 1024), (torch.ones(2, 3, 1024, 1024) * 2),
          (torch.ones(2, 3, 1024, 1024) * 3)]
     # print(int(x[0].shape[2]/4))
     # raise Exception
