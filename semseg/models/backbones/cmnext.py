@@ -454,7 +454,7 @@ class CMNeXt(nn.Module):
             # x_f = self.tokenselect(x_ext, self.extra_score_predictor[0]) if self.num_modals > 1 else x_ext[0]
             # x_ext, x_f, loss_moe1 = self.allinone_moe1(x_ext)
             # x_ext, x_f, loss_moe1 = self.moe1(x_ext)
-            x_ext, x_f, loss_moe1 = self.moe1(x)
+            x_ext, x_f, loss_moe1 = self.moe1(x_ext)
             for blk in self.extra_block1_shared:
                 x_f = blk(x_f)
 
