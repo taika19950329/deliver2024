@@ -251,26 +251,26 @@ class CMNeXt(nn.Module):
         #     self.allinone_moe3 = AllInOne_lora(128, 160, 3, 2, 2, 3//2, 6, 128, True, 2)
         #     self.allinone_moe4 = AllInOne_lora(320, 256, 3, 2, 2, 3 // 2, 6, 64, True, 2)
 
-        # if self.num_modals > 0:  ######
-        #     self.moe1 = MoE_lora_new(3, embed_dims[0], 7, 4, 7 // 2, 3, 1024, True, 2)
-        #     self.moe2 = MoE_lora_new(64, embed_dims[1], 3, 2, 3 // 2, 3, 256, True, 2)
-        #     self.moe3 = MoE_lora_new(128, embed_dims[2], 3, 2, 3 // 2, 3, 128, True, 2)
-        #     self.moe4 = MoE_lora_new(320, embed_dims[3], 3, 2, 3 // 2, 3, 64, True, 2)
         if self.num_modals > 0:  ######
-            self.moe1 = MoE_lora_rgb(3, embed_dims[0], 7, 4, 7 // 2, 3, 1024, True, 2)
-            self.moe2 = MoE_lora_rgb(64, embed_dims[1], 3, 2, 3 // 2, 3, 256, True, 2)
-            self.moe3 = MoE_lora_rgb(128, embed_dims[2], 3, 2, 3 // 2, 3, 128, True, 2)
-            self.moe4 = MoE_lora_rgb(320, embed_dims[3], 3, 2, 3 // 2, 3, 64, True, 2)
+            self.moe1 = MoE_lora_new(3, embed_dims[0], 7, 4, 7 // 2, 3, 1024, True, 2)
+            self.moe2 = MoE_lora_new(64, embed_dims[1], 3, 2, 3 // 2, 3, 256, True, 2)
+            self.moe3 = MoE_lora_new(128, embed_dims[2], 3, 2, 3 // 2, 3, 128, True, 2)
+            self.moe4 = MoE_lora_new(320, embed_dims[3], 3, 2, 3 // 2, 3, 64, True, 2)
+        # if self.num_modals > 0:  ######
+        #     self.moe1 = MoE_lora_rgb(3, embed_dims[0], 7, 4, 7 // 2, 3, 1024, True, 2)
+        #     self.moe2 = MoE_lora_rgb(64, embed_dims[1], 3, 2, 3 // 2, 3, 256, True, 2)
+        #     self.moe3 = MoE_lora_rgb(128, embed_dims[2], 3, 2, 3 // 2, 3, 128, True, 2)
+        #     self.moe4 = MoE_lora_rgb(320, embed_dims[3], 3, 2, 3 // 2, 3, 64, True, 2)
 
         self.attn_gate1 = AttentionWeightedSum()
         self.attn_gate2 = AttentionWeightedSum()
         self.attn_gate3 = AttentionWeightedSum()
         self.attn_gate4 = AttentionWeightedSum()
 
-        self.concat_conv1 = ConcatAndConv(4 * embed_dims[0], embed_dims[0])  ######
-        self.concat_conv2 = ConcatAndConv(4 * embed_dims[1], embed_dims[1])
-        self.concat_conv3 = ConcatAndConv(4 * embed_dims[2], embed_dims[2])
-        self.concat_conv4 = ConcatAndConv(4 * embed_dims[3], embed_dims[3])
+        self.concat_conv1 = ConcatAndConv(3 * embed_dims[0], embed_dims[0])  ######
+        self.concat_conv2 = ConcatAndConv(3 * embed_dims[1], embed_dims[1])
+        self.concat_conv3 = ConcatAndConv(3 * embed_dims[2], embed_dims[2])
+        self.concat_conv4 = ConcatAndConv(3 * embed_dims[3], embed_dims[3])
 
         self.final_conv1 = FinalConvProcessor(embed_dims[0], embed_dims[0])
         self.final_conv2 = FinalConvProcessor(embed_dims[1], embed_dims[1])
@@ -319,10 +319,10 @@ class CMNeXt(nn.Module):
                  range(extra_depths[0])])  # --- MSPABlock
             self.extra_norm1_diff3 = ConvLayerNorm(embed_dims[0])
 
-            self.extra_block1_diff4 = nn.ModuleList(
-                [MSPABlock(embed_dims[0], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[0])])  # --- MSPABlock
-            self.extra_norm1_diff4 = ConvLayerNorm(embed_dims[0])
+            # self.extra_block1_diff4 = nn.ModuleList(
+            #     [MSPABlock(embed_dims[0], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
+            #      range(extra_depths[0])])  # --- MSPABlock
+            # self.extra_norm1_diff4 = ConvLayerNorm(embed_dims[0])
 
         cur += depths[0]
         self.block2 = nn.ModuleList([Block(embed_dims[1], 2, 4, dpr[cur + i]) for i in range(depths[1])])
@@ -349,10 +349,10 @@ class CMNeXt(nn.Module):
                  range(extra_depths[1])])
             self.extra_norm2_diff3 = ConvLayerNorm(embed_dims[1])
 
-            self.extra_block2_diff4 = nn.ModuleList(
-                [MSPABlock(embed_dims[1], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[1])])
-            self.extra_norm2_diff4 = ConvLayerNorm(embed_dims[1])
+            # self.extra_block2_diff4 = nn.ModuleList(
+            #     [MSPABlock(embed_dims[1], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
+            #      range(extra_depths[1])])
+            # self.extra_norm2_diff4 = ConvLayerNorm(embed_dims[1])
 
         cur += depths[1]
         self.block3 = nn.ModuleList([Block(embed_dims[2], 5, 2, dpr[cur + i]) for i in range(depths[2])])
@@ -379,10 +379,10 @@ class CMNeXt(nn.Module):
                  range(extra_depths[2])])
             self.extra_norm3_diff3 = ConvLayerNorm(embed_dims[2])
 
-            self.extra_block3_diff4 = nn.ModuleList(
-                [MSPABlock(embed_dims[2], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[2])])
-            self.extra_norm3_diff4 = ConvLayerNorm(embed_dims[2])
+            # self.extra_block3_diff4 = nn.ModuleList(
+            #     [MSPABlock(embed_dims[2], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
+            #      range(extra_depths[2])])
+            # self.extra_norm3_diff4 = ConvLayerNorm(embed_dims[2])
 
         cur += depths[2]
         self.block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
@@ -409,10 +409,10 @@ class CMNeXt(nn.Module):
                  range(extra_depths[3])])
             self.extra_norm4_diff3 = ConvLayerNorm(embed_dims[3])
 
-            self.extra_block4_diff4 = nn.ModuleList(
-                [MSPABlock(embed_dims[3], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[3])])
-            self.extra_norm4_diff4 = ConvLayerNorm(embed_dims[3])
+            # self.extra_block4_diff4 = nn.ModuleList(
+            #     [MSPABlock(embed_dims[3], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
+            #      range(extra_depths[3])])
+            # self.extra_norm4_diff4 = ConvLayerNorm(embed_dims[3])
 
         if self.num_modals > 0:
             num_heads = [1, 2, 5, 8]
@@ -464,13 +464,13 @@ class CMNeXt(nn.Module):
                 x_ext[1] = blk2(x_ext[1])
             for blk3 in self.extra_block1_diff3:
                 x_ext[2] = blk3(x_ext[2])
-            for blk4 in self.extra_block1_diff4:
-                x_ext[3] = blk4(x_ext[3])
+            # for blk4 in self.extra_block1_diff4:
+            #     x_ext[3] = blk4(x_ext[3])
 
             x_ext[0] = self.extra_norm1_diff1(x_ext[0])
             x_ext[1] = self.extra_norm1_diff2(x_ext[1])
             x_ext[2] = self.extra_norm1_diff3(x_ext[2])
-            x_ext[3] = self.extra_norm1_diff4(x_ext[3])
+            # x_ext[3] = self.extra_norm1_diff4(x_ext[3])
             x1_f = self.extra_norm1_shared(x_f)
             x1_cam, x1_f = self.FRMs[0](x1_cam, x1_f)
             x_fused = self.FFMs[0](x1_cam, x1_f)
@@ -507,13 +507,13 @@ class CMNeXt(nn.Module):
                 x_ext[1] = blk2(x_ext[1])
             for blk3 in self.extra_block2_diff3:
                 x_ext[2] = blk3(x_ext[2])
-            for blk4 in self.extra_block2_diff4:
-                x_ext[3] = blk4(x_ext[3])
+            # for blk4 in self.extra_block2_diff4:
+            #     x_ext[3] = blk4(x_ext[3])
 
             x_ext[0] = self.extra_norm2_diff1(x_ext[0])
             x_ext[1] = self.extra_norm2_diff2(x_ext[1])
             x_ext[2] = self.extra_norm2_diff3(x_ext[2])
-            x_ext[3] = self.extra_norm2_diff4(x_ext[3])
+            # x_ext[3] = self.extra_norm2_diff4(x_ext[3])
             x2_f = self.extra_norm2_shared(x_f)
             x2_cam, x2_f = self.FRMs[1](x2_cam, x2_f)
             x_fused = self.FFMs[1](x2_cam, x2_f)
@@ -550,13 +550,13 @@ class CMNeXt(nn.Module):
                 x_ext[1] = blk2(x_ext[1])
             for blk3 in self.extra_block3_diff3:
                 x_ext[2] = blk3(x_ext[2])
-            for blk4 in self.extra_block3_diff4:
-                x_ext[3] = blk4(x_ext[3])
+            # for blk4 in self.extra_block3_diff4:
+            #     x_ext[3] = blk4(x_ext[3])
 
             x_ext[0] = self.extra_norm3_diff1(x_ext[0])
             x_ext[1] = self.extra_norm3_diff2(x_ext[1])
             x_ext[2] = self.extra_norm3_diff3(x_ext[2])
-            x_ext[3] = self.extra_norm3_diff4(x_ext[3])
+            # x_ext[3] = self.extra_norm3_diff4(x_ext[3])
             x3_f = self.extra_norm3_shared(x_f)
             x3_cam, x3_f = self.FRMs[2](x3_cam, x3_f)
             x_fused = self.FFMs[2](x3_cam, x3_f)
@@ -593,13 +593,13 @@ class CMNeXt(nn.Module):
                 x_ext[1] = blk2(x_ext[1])
             for blk3 in self.extra_block4_diff3:
                 x_ext[2] = blk3(x_ext[2])
-            for blk4 in self.extra_block4_diff4:
-                x_ext[3] = blk4(x_ext[3])
+            # for blk4 in self.extra_block4_diff4:
+            #     x_ext[3] = blk4(x_ext[3])
 
             x_ext[0] = self.extra_norm4_diff1(x_ext[0])
             x_ext[1] = self.extra_norm4_diff2(x_ext[1])
             x_ext[2] = self.extra_norm4_diff3(x_ext[2])
-            x_ext[3] = self.extra_norm4_diff4(x_ext[3])
+            # x_ext[3] = self.extra_norm4_diff4(x_ext[3])
             x4_f = self.extra_norm4_shared(x_f)
             # print("4", x4_cam.shape, x4_f.shape)
             x4_cam, x4_f = self.FRMs[3](x4_cam, x4_f)

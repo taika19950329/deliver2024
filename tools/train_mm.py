@@ -51,6 +51,24 @@ def main(cfg, gpu, save_dir):
         logger.info(msg)
     else:
         model.init_pretrained(model_cfg['PRETRAINED'])
+        current_state_dict = model.state_dict()
+        custom_state_dict = torch.load('/home/yi/Documents/DELIVER/checkpoints/pretrained/deliver/cmnext_b2_deliver_rgb.pth')
+        # custom_state_dict = torch.load(
+        #     '/home/yi/Documents/DELIVER/output/DELIVER_CMNeXt-B2_idel_MoE_20240803/CMNeXt_CMNeXt-B2_DELIVER_epoch115_61.81.pth')
+        for name, param in custom_state_dict.items():
+            if ('patch_embed' or 'block' or 'norm' in custom_state_dict.items()) and ('extra' not in custom_state_dict.items()):
+                # print(f"Layer: {name} | Size: {param.size()} | Requires Grad: {param.requires_grad}")
+                current_state_dict[name] = custom_state_dict[name]
+        model.load_state_dict(current_state_dict)
+
+        for name, param in model.named_parameters():
+            if ('patch_embed' in name.split(".")[1] or 'block' in name.split(".")[1] or 'norm' in name.split(".")[1]) and ('extra' not in name.split(".")[1]):
+                param.requires_grad = False
+            else:
+                param.requires_grad = True
+            # print(f"Layer: {name} | Size: {param.size()} | Requires Grad: {param.requires_grad}, ture count:{cccc}")
+        raise Exception
+
     model = model.to(device)
     
     iters_per_epoch = len(trainset) // train_cfg['BATCH_SIZE'] // gpus
