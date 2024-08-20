@@ -57,8 +57,16 @@ def load_dualpath_model(model, model_file):
             state_dict[k] = v
         elif k.find('block') >= 0:
             state_dict[k] = v
+            state_dict[k.replace('block', 'shared_extra_block')] = v
+            state_dict[k.replace('block', 'diff1_extra_block')] = v
+            state_dict[k.replace('block', 'diff2_extra_block')] = v
+            state_dict[k.replace('block', 'diff3_extra_block')] = v
         elif k.find('norm') >= 0:
             state_dict[k] = v
+            state_dict[k.replace('norm', 'shared_extra_norm')] = v
+            state_dict[k.replace('norm', 'diff1_extra_norm')] = v
+            state_dict[k.replace('norm', 'diff2_extra_norm')] = v
+            state_dict[k.replace('norm', 'diff3_extra_norm')] = v
 
     if isinstance(extra_pretrained, str):
         for k, v in raw_state_dict_ext.items():

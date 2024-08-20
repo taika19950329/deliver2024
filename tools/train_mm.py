@@ -68,6 +68,8 @@ def main(cfg, gpu, save_dir):
             else:
                 param.requires_grad = True
             print(f"Layer: {name} | Size: {param.size()} | Requires Grad: {param.requires_grad}")
+            if 'diff1_extra_block1' == name.split(".")[1]:
+                print(param)
         raise Exception
 
     model = model.to(device)
