@@ -647,11 +647,11 @@ class CMNeXt(nn.Module):
             x_ext[2] = x_ext[2].view(B, C, -1).permute(0, 2, 1)
 
             for blk1 in self.diff1_extra_block3:
-                x_ext[0] = blk1(x_ext[0])
+                x_ext[0] = blk1(x_ext[0], H, W)
             for blk2 in self.diff2_extra_block3:
-                x_ext[1] = blk2(x_ext[1])
+                x_ext[1] = blk2(x_ext[1], H, W)
             for blk3 in self.diff3_extra_block3:
-                x_ext[2] = blk3(x_ext[2])
+                x_ext[2] = blk3(x_ext[2], H, W)
             # for blk4 in self.extra_block3_diff4:
             #     x_ext[3] = blk4(x_ext[3])
 
