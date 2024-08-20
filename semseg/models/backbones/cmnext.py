@@ -13,6 +13,8 @@ from semseg.utils.utils import nchw_to_nlc, nlc_to_nchw
 
 from semseg.models.modules.moe_lora import MoE_lora, AllInOne_lora, MoE_lora_new, MoE_lora_rgb, AttentionWeightedSum, ConcatAndConv, \
     FinalConvProcessor
+from segment_anything import sam_model_registry
+from semseg.models.modules.sam_lora import *
 from semseg.models.modules.BasicBlock import TF_3D
 
 import numpy as np
@@ -261,6 +263,30 @@ class CMNeXt(nn.Module):
         #     self.moe2 = MoE_lora_rgb(64, embed_dims[1], 3, 2, 3 // 2, 3, 256, True, 2)
         #     self.moe3 = MoE_lora_rgb(128, embed_dims[2], 3, 2, 3 // 2, 3, 128, True, 2)
         #     self.moe4 = MoE_lora_rgb(320, embed_dims[3], 3, 2, 3 // 2, 3, 64, True, 2)
+        # if self.num_modals > 0:
+        #     self.sam1 = sam_model_registry["vit_b"](
+        #         checkpoint="/home/yi/Documents/DELIVER/checkpoints/pretrained/sam/sam_vit_b_01ec64.pth")
+        #     self.sam2 = sam_model_registry["vit_b"](
+        #         checkpoint="/home/yi/Documents/DELIVER/checkpoints/pretrained/sam/sam_vit_b_01ec64.pth")
+        #     self.sam3 = sam_model_registry["vit_b"](
+        #         checkpoint="/home/yi/Documents/DELIVER/checkpoints/pretrained/sam/sam_vit_b_01ec64.pth")
+        #     self.sam4 = sam_model_registry["vit_b"](
+        #         checkpoint="/home/yi/Documents/DELIVER/checkpoints/pretrained/sam/sam_vit_b_01ec64.pth")
+        #     self.lora_sam1 = LoRA_Sam(self.sam1, 4)
+        #     self.lora_sam2 = LoRA_Sam(self.sam2, 4)
+        #     self.lora_sam3 = LoRA_Sam(self.sam3, 4)
+        #     self.lora_sam4 = LoRA_Sam(self.sam4, 4)
+
+        # if self.num_modals > 0:
+        #     self.change_out_ch1 = nn.Conv2d(256, 64, 1)
+        #     self.change_out_ch2 = nn.Conv2d(256, 128, 1)
+        #     self.change_out_ch3 = nn.Conv2d(256, 320, 1)
+        #     self.change_out_ch4 = nn.Conv2d(256, 512, 1)
+        #
+        # if self.num_modals > 0:
+        #     self.change_in_ch1 = nn.Conv2d(64, 3, 1)
+        #     self.change_in_ch2 = nn.Conv2d(128, 3, 1)
+        #     self.change_in_ch3 = nn.Conv2d(320, 3, 1)
 
         self.attn_gate1 = AttentionWeightedSum()
         self.attn_gate2 = AttentionWeightedSum()
@@ -447,6 +473,11 @@ class CMNeXt(nn.Module):
         for blk in self.block1:
             x_cam = blk(x_cam, H, W)
         x1_cam = self.norm1(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+        # x_cam = self.lora_sam1.sam.image_encoder(x_cam)
+        # x1_cam = F.interpolate(x_cam, size=(256, 256), mode="bilinear", align_corners=False)
+        # x1_cam = self.change_out_ch1(x1_cam).permute(0, 2, 3, 1)
+        # x1_cam = self.norm1(x1_cam).permute(0, 3, 1, 2)
+
         if self.num_modals > 0:
             # x_ext, loss_moe1 = self.moe1(x_ext)
             # x_ext, _, _ = self.extra_downsample_layers[0](x_ext)
@@ -489,6 +520,16 @@ class CMNeXt(nn.Module):
         for blk in self.block2:
             x_cam = blk(x_cam, H, W)
         x2_cam = self.norm2(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+        # x1_cam = self.change_in_ch1(x1_cam)
+        # x1_cam = F.interpolate(x1_cam, size=(1024, 1024), mode="bilinear", align_corners=False)
+        # x_cam = self.lora_sam2.sam.image_encoder(x1_cam)
+        # x2_cam = F.interpolate(x_cam, size=(128, 128), mode="bilinear", align_corners=False)
+        # x2_cam = self.change_out_ch2(x2_cam).permute(0, 2, 3, 1)
+        # x2_cam = self.norm2(x2_cam).permute(0, 3, 1, 2)
+        # print(x2_cam.shape)
+        # raise Exception
+
         if self.num_modals > 0:
             # x_ext, loss_moe2 = self.moe2(x_ext)
             # x_ext, _, _ = self.extra_downsample_layers[1](x_ext)
@@ -618,9 +659,9 @@ class CMNeXt(nn.Module):
 
 
 if __name__ == '__main__':
-    modals = ['depth', 'event', 'lidar']
+    modals = ['rgb', 'depth', 'event', 'lidar']
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    x = [torch.ones(2, 3, 1024, 1024), (torch.ones(2, 3, 1024, 1024) * 2),
+    x = [torch.ones(2, 3, 1024, 1024), torch.ones(2, 3, 1024, 1024), (torch.ones(2, 3, 1024, 1024) * 2),
          (torch.ones(2, 3, 1024, 1024) * 3)]
     # print(int(x[0].shape[2]/4))
     # raise Exception

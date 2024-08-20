@@ -21,14 +21,14 @@ def load_dualpath_model(model, model_file):
         if k.find('patch_embed') >= 0:
             state_dict[k] = v
             # patch_embedx, proj, weight = k.split('.')
-            # state_dict[k.replace('patch_embed', 'extra_patch_embed')] = v
-            # state_dict[new_k] = v
+            state_dict[k.replace('patch_embed', 'extra_patch_embed')] = v
+            state_dict[new_k] = v
         elif k.find('block') >= 0:
             state_dict[k] = v
-            # state_dict[k.replace('block', 'extra_block')] = v
+            state_dict[k.replace('block', 'extra_block')] = v
         elif k.find('norm') >= 0:
             state_dict[k] = v
-            # state_dict[k.replace('norm', 'extra_norm')] = v
+            state_dict[k.replace('norm', 'extra_norm')] = v
 
     msg = model.load_state_dict(state_dict, strict=False)
     print(msg)
