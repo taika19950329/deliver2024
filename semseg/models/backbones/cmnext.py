@@ -18,6 +18,7 @@ from semseg.models.modules.sam_lora import *
 from semseg.models.modules.BasicBlock import TF_3D
 
 import numpy as np
+from copy import deepcopy
 
 
 class Attention(nn.Module):
@@ -100,6 +101,28 @@ class PatchEmbedParallel(nn.Module):
         x = self.proj(x)
         _, _, H, W = x[0].shape
         x = self.norm(x)
+        return x, H, W
+
+
+class PatchEmbedSingle(nn.Module):
+    def __init__(self, c1=3, c2=32, patch_size=7, stride=4, padding=0):
+        super().__init__()
+        # 定义卷积层
+        self.proj = nn.Conv2d(c1, c2, patch_size, stride, padding)
+        # 定义归一化层
+        self.norm = nn.LayerNorm(c2)  # 对通道维度进行归一化
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # 卷积操作
+        x = self.proj(x)
+        # 获取特征图的高度和宽度
+        _, _, H, W = x.shape
+        # 将通道维度移动到最后以便于 LayerNorm 操作
+        x = x.permute(0, 2, 3, 1)  # 从 (B, C, H, W) -> (B, H, W, C)
+        # 归一化操作
+        x = self.norm(x)
+        # 恢复原始维度顺序
+        x = x.permute(0, 3, 1, 2)  # 从 (B, H, W, C) -> (B, C, H, W)
         return x, H, W
 
 
@@ -235,58 +258,11 @@ class CMNeXt(nn.Module):
         norm_cfg = dict(type='BN', requires_grad=True)
         # print('backbone cmnext weight_h_ori', weight_h_ori)
 
-        # if self.num_modals > 0: ######
-        #     self.moe1 = MoE_lora(3, 64, 7, 4, 7//2, 3, 1024, True, 2)
-        #     self.moe2 = MoE_lora(64, 128, 3, 2, 3//2, 3, 256, True, 2)
-        #     self.moe3 = MoE_lora(128, 320, 3, 2, 3//2, 3, 128, True, 2)
-        #     self.moe4 = MoE_lora(320, 512, 3, 2, 3//2, 3, 64, True, 2)
-        #
-        # if self.num_modals > 0:
-        #     self.fusion1 = TF_3D(embedding_dim=64, volumn_size=256, nhead=4, method="TF")
-        #     self.fusion2 = TF_3D(embedding_dim=128, volumn_size=128, nhead=4, method="TF")
-        #     self.fusion3 = TF_3D(embedding_dim=320, volumn_size=64, nhead=4, method="TF")
-        #     self.fusion4 = TF_3D(embedding_dim=512, volumn_size=32, nhead=4, method="TF")
-
-        # if self.num_modals > 0:
-        #     self.allinone_moe1 = AllInOne_lora(3, 32, 7, 4, 4, 7//2, 6, 1024, True, 2)
-        #     self.allinone_moe2 = AllInOne_lora(64, 64, 3, 2, 2, 3//2, 6, 256, True, 2)
-        #     self.allinone_moe3 = AllInOne_lora(128, 160, 3, 2, 2, 3//2, 6, 128, True, 2)
-        #     self.allinone_moe4 = AllInOne_lora(320, 256, 3, 2, 2, 3 // 2, 6, 64, True, 2)
-
         if self.num_modals > 0:  ######
             self.moe1 = MoE_lora_new(3, embed_dims[0], 7, 4, 7 // 2, 3, 1024, True, 2)
             self.moe2 = MoE_lora_new(64, embed_dims[1], 3, 2, 3 // 2, 3, 256, True, 2)
             self.moe3 = MoE_lora_new(128, embed_dims[2], 3, 2, 3 // 2, 3, 128, True, 2)
             self.moe4 = MoE_lora_new(320, embed_dims[3], 3, 2, 3 // 2, 3, 64, True, 2)
-        # if self.num_modals > 0:  ######
-        #     self.moe1 = MoE_lora_rgb(3, embed_dims[0], 7, 4, 7 // 2, 3, 1024, True, 2)
-        #     self.moe2 = MoE_lora_rgb(64, embed_dims[1], 3, 2, 3 // 2, 3, 256, True, 2)
-        #     self.moe3 = MoE_lora_rgb(128, embed_dims[2], 3, 2, 3 // 2, 3, 128, True, 2)
-        #     self.moe4 = MoE_lora_rgb(320, embed_dims[3], 3, 2, 3 // 2, 3, 64, True, 2)
-        if self.num_modals > 0:
-            self.sam1 = sam_model_registry["vit_b"](
-                checkpoint="/home/yi/Documents/DELIVER/checkpoints/pretrained/sam/sam_vit_b_01ec64.pth")
-            self.sam2 = sam_model_registry["vit_b"](
-                checkpoint="/home/yi/Documents/DELIVER/checkpoints/pretrained/sam/sam_vit_b_01ec64.pth")
-            self.sam3 = sam_model_registry["vit_b"](
-                checkpoint="/home/yi/Documents/DELIVER/checkpoints/pretrained/sam/sam_vit_b_01ec64.pth")
-            self.sam4 = sam_model_registry["vit_b"](
-                checkpoint="/home/yi/Documents/DELIVER/checkpoints/pretrained/sam/sam_vit_b_01ec64.pth")
-            self.lora_sam1 = LoRA_Sam(self.sam1, 4)
-            self.lora_sam2 = LoRA_Sam(self.sam2, 4)
-            self.lora_sam3 = LoRA_Sam(self.sam3, 4)
-            self.lora_sam4 = LoRA_Sam(self.sam4, 4)
-
-        if self.num_modals > 0:
-            self.change_out_ch1 = nn.Conv2d(256, 64, 1)
-            self.change_out_ch2 = nn.Conv2d(256, 128, 1)
-            self.change_out_ch3 = nn.Conv2d(256, 320, 1)
-            self.change_out_ch4 = nn.Conv2d(256, 512, 1)
-
-        if self.num_modals > 0:
-            self.change_in_ch1 = nn.Conv2d(64, 3, 1)
-            self.change_in_ch2 = nn.Conv2d(128, 3, 1)
-            self.change_in_ch3 = nn.Conv2d(320, 3, 1)
 
         self.attn_gate1 = AttentionWeightedSum()
         self.attn_gate2 = AttentionWeightedSum()
@@ -304,185 +280,57 @@ class CMNeXt(nn.Module):
         self.final_conv4 = FinalConvProcessor(embed_dims[3], embed_dims[3])
 
         # patch_embed
-        # self.patch_embed1 = PatchEmbed(3, embed_dims[0], 7, 4, 7 // 2)
-        # self.patch_embed2 = PatchEmbed(embed_dims[0], embed_dims[1], 3, 2, 3 // 2)
-        # self.patch_embed3 = PatchEmbed(embed_dims[1], embed_dims[2], 3, 2, 3 // 2)
-        # self.patch_embed4 = PatchEmbed(embed_dims[2], embed_dims[3], 3, 2, 3 // 2)
+        self.patch_embed1 = PatchEmbed(3, embed_dims[0], 7, 4, 7 // 2)
+        self.patch_embed2 = PatchEmbed(embed_dims[0], embed_dims[1], 3, 2, 3 // 2)
+        self.patch_embed3 = PatchEmbed(embed_dims[1], embed_dims[2], 3, 2, 3 // 2)
+        self.patch_embed4 = PatchEmbed(embed_dims[2], embed_dims[3], 3, 2, 3 // 2)
 
-        # if self.num_modals > 0:
-        #     self.extra_downsample_layers = nn.ModuleList([
-        #         PatchEmbedParallel(3, embed_dims[0], 7, 4, 7//2, self.num_modals),
-        #         *[PatchEmbedParallel(embed_dims[i], embed_dims[i+1], 3, 2, 3//2, self.num_modals) for i in range(3)]
-        #     ])
-        if self.num_modals > 1:
-            self.extra_score_predictor = nn.ModuleList(
-                [PredictorConv(embed_dims[i], self.num_modals) for i in range(len(depths))])
+        self.lora_downsample_layer = nn.ModuleList([
+                PatchEmbedSingle(3, embed_dims[0], 7, 4, 7//2),
+                *[PatchEmbedSingle(embed_dims[i], embed_dims[i+1], 3, 2, 3//2) for i in range(3)]
+            ])
+        self.lora_norm = nn.ModuleList([nn.LayerNorm(embed_dims[i]) for i in range(4)])
+        self.lora_extra_norm = nn.ModuleList(
+            [nn.ModuleList([nn.LayerNorm(embed_dims[i]) for i in range(4)]) for j in range(3)]
+        )
 
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
 
         cur = 0
-        # self.block1 = nn.ModuleList([Block(embed_dims[0], 1, 8, dpr[cur + i]) for i in range(depths[0])])
-        self.norm1 = ConvLayerNorm(embed_dims[0])
+        self.block1 = nn.ModuleList([Block(embed_dims[0], 1, 8, dpr[cur + i]) for i in range(depths[0])])
+        self.norm1 = nn.LayerNorm(embed_dims[0])
         if self.num_modals > 0:
             self.shared_extra_block1 = nn.ModuleList(
                 [MSPABlock(embed_dims[0], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
                  range(extra_depths[0])])  # --- MSPABlock
             self.shared_extra_norm1 = ConvLayerNorm(embed_dims[0])
-            # self.shared_extra_block1 = nn.ModuleList([Block(embed_dims[0], 1, 8, dpr[cur + i]) for i in range(depths[0])])
-            # self.shared_extra_norm1 = nn.LayerNorm(embed_dims[0])
-
-        if self.num_modals > 0:  ######
-            self.diff1_extra_block1 = nn.ModuleList(
-                [MSPABlock(embed_dims[0], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[0])])  # --- MSPABlock
-            self.diff1_extra_norm1 = ConvLayerNorm(embed_dims[0])
-
-            self.diff2_extra_block1 = nn.ModuleList(
-                [MSPABlock(embed_dims[0], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[0])])  # --- MSPABlock
-            self.diff2_extra_norm1 = ConvLayerNorm(embed_dims[0])
-
-            self.diff3_extra_block1 = nn.ModuleList(
-                [MSPABlock(embed_dims[0], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[0])])  # --- MSPABlock
-            self.diff3_extra_norm1 = ConvLayerNorm(embed_dims[0])
-
-            # self.diff1_extra_block1 = nn.ModuleList([Block(embed_dims[0], 1, 8, dpr[cur + i]) for i in range(depths[0])])
-            # self.diff1_extra_norm1 = nn.LayerNorm(embed_dims[0])
-            #
-            # self.diff2_extra_block1 = nn.ModuleList([Block(embed_dims[0], 1, 8, dpr[cur + i]) for i in range(depths[0])])
-            # self.diff2_extra_norm1 = nn.LayerNorm(embed_dims[0])
-            #
-            # self.diff3_extra_block1 = nn.ModuleList([Block(embed_dims[0], 1, 8, dpr[cur + i]) for i in range(depths[0])])
-            # self.diff3_extra_norm1 = nn.LayerNorm(embed_dims[0])
-
-            # self.extra_block1_diff4 = nn.ModuleList(
-            #     [MSPABlock(embed_dims[0], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-            #      range(extra_depths[0])])  # --- MSPABlock
-            # self.extra_norm1_diff4 = ConvLayerNorm(embed_dims[0])
 
         cur += depths[0]
-        # self.block2 = nn.ModuleList([Block(embed_dims[1], 2, 4, dpr[cur + i]) for i in range(depths[1])])
-        self.norm2 = ConvLayerNorm(embed_dims[1])
+        self.block2 = nn.ModuleList([Block(embed_dims[1], 2, 4, dpr[cur + i]) for i in range(depths[1])])
+        self.norm2 = nn.LayerNorm(embed_dims[1])
         if self.num_modals > 0:
             self.shared_extra_block2 = nn.ModuleList(
                 [MSPABlock(embed_dims[1], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
                  range(extra_depths[1])])
             self.shared_extra_norm2 = ConvLayerNorm(embed_dims[1])
-            # self.shared_extra_block2 = nn.ModuleList([Block(embed_dims[1], 2, 4, dpr[cur + i]) for i in range(depths[1])])
-            # self.shared_extra_norm2 = nn.LayerNorm(embed_dims[1])
-
-        if self.num_modals > 0:  ######
-            self.diff1_extra_block2 = nn.ModuleList(
-                [MSPABlock(embed_dims[1], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[1])])
-            self.diff1_extra_norm2 = ConvLayerNorm(embed_dims[1])
-
-            self.diff2_extra_block2 = nn.ModuleList(
-                [MSPABlock(embed_dims[1], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[1])])
-            self.diff2_extra_norm2 = ConvLayerNorm(embed_dims[1])
-
-            self.diff3_extra_block2 = nn.ModuleList(
-                [MSPABlock(embed_dims[1], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[1])])
-            self.diff3_extra_norm2 = ConvLayerNorm(embed_dims[1])
-
-            # self.diff1_extra_block2 = nn.ModuleList([Block(embed_dims[1], 2, 4, dpr[cur + i]) for i in range(depths[1])])
-            # self.diff1_extra_norm2 = nn.LayerNorm(embed_dims[1])
-            #
-            # self.diff2_extra_block2 = nn.ModuleList([Block(embed_dims[1], 2, 4, dpr[cur + i]) for i in range(depths[1])])
-            # self.diff2_extra_norm2 = nn.LayerNorm(embed_dims[1])
-            #
-            # self.diff3_extra_block2 = nn.ModuleList([Block(embed_dims[1], 2, 4, dpr[cur + i]) for i in range(depths[1])])
-            # self.diff3_extra_norm2 = nn.LayerNorm(embed_dims[1])
-
-            # self.extra_block2_diff4 = nn.ModuleList(
-            #     [MSPABlock(embed_dims[1], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-            #      range(extra_depths[1])])
-            # self.extra_norm2_diff4 = ConvLayerNorm(embed_dims[1])
 
         cur += depths[1]
-        # self.block3 = nn.ModuleList([Block(embed_dims[2], 5, 2, dpr[cur + i]) for i in range(depths[2])])
-        self.norm3 = ConvLayerNorm(embed_dims[2])
+        self.block3 = nn.ModuleList([Block(embed_dims[2], 5, 2, dpr[cur + i]) for i in range(depths[2])])
+        self.norm3 = nn.LayerNorm(embed_dims[2])
         if self.num_modals > 0:
             self.shared_extra_block3 = nn.ModuleList(
                 [MSPABlock(embed_dims[2], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
                  range(extra_depths[2])])
             self.shared_extra_norm3 = ConvLayerNorm(embed_dims[2])
-            # self.shared_extra_block3 = nn.ModuleList([Block(embed_dims[2], 5, 2, dpr[cur + i]) for i in range(depths[2])])
-            # self.shared_extra_norm3 = nn.LayerNorm(embed_dims[2])
-
-        if self.num_modals > 0:  ######
-            self.diff1_extra_block3 = nn.ModuleList(
-                [MSPABlock(embed_dims[2], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[2])])
-            self.diff1_extra_norm3 = ConvLayerNorm(embed_dims[2])
-
-            self.diff2_extra_block3 = nn.ModuleList(
-                [MSPABlock(embed_dims[2], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[2])])
-            self.diff2_extra_norm3 = ConvLayerNorm(embed_dims[2])
-
-            self.diff3_extra_block3 = nn.ModuleList(
-                [MSPABlock(embed_dims[2], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[2])])
-            self.diff3_extra_norm3 = ConvLayerNorm(embed_dims[2])
-
-            # self.diff1_extra_block3 = nn.ModuleList([Block(embed_dims[2], 5, 2, dpr[cur + i]) for i in range(depths[2])])
-            # self.diff1_extra_norm3 = nn.LayerNorm(embed_dims[2])
-            #
-            # self.diff2_extra_block3 = nn.ModuleList([Block(embed_dims[2], 5, 2, dpr[cur + i]) for i in range(depths[2])])
-            # self.diff2_extra_norm3 = nn.LayerNorm(embed_dims[2])
-            #
-            # self.diff3_extra_block3 = nn.ModuleList([Block(embed_dims[2], 5, 2, dpr[cur + i]) for i in range(depths[2])])
-            # self.diff3_extra_norm3 = nn.LayerNorm(embed_dims[2])
-
-            # self.extra_block3_diff4 = nn.ModuleList(
-            #     [MSPABlock(embed_dims[2], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-            #      range(extra_depths[2])])
-            # self.extra_norm3_diff4 = ConvLayerNorm(embed_dims[2])
 
         cur += depths[2]
-        # self.block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
-        self.norm4 = ConvLayerNorm(embed_dims[3])
+        self.block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
+        self.norm4 = nn.LayerNorm(embed_dims[3])
         if self.num_modals > 0:
             self.shared_extra_block4 = nn.ModuleList(
                 [MSPABlock(embed_dims[3], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
                  range(extra_depths[3])])
             self.shared_extra_norm4 = ConvLayerNorm(embed_dims[3])
-            # self.shared_extra_block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
-            # self.shared_extra_norm4 = nn.LayerNorm(embed_dims[3])
-
-        if self.num_modals > 0:  ######
-            self.diff1_extra_block4 = nn.ModuleList(
-                [MSPABlock(embed_dims[3], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[3])])
-            self.diff1_extra_norm4 = ConvLayerNorm(embed_dims[3])
-
-            self.diff2_extra_block4 = nn.ModuleList(
-                [MSPABlock(embed_dims[3], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[3])])
-            self.diff2_extra_norm4 = ConvLayerNorm(embed_dims[3])
-
-            self.diff3_extra_block4 = nn.ModuleList(
-                [MSPABlock(embed_dims[3], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[3])])
-            self.diff3_extra_norm4 = ConvLayerNorm(embed_dims[3])
-
-            # self.diff1_extra_block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
-            # self.diff1_extra_norm4 = nn.LayerNorm(embed_dims[3])
-            #
-            # self.diff2_extra_block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
-            # self.diff2_extra_norm4 = nn.LayerNorm(embed_dims[3])
-            #
-            # self.diff3_extra_block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
-            # self.diff3_extra_norm4 = nn.LayerNorm(embed_dims[3])
-
-            # self.extra_block4_diff4 = nn.ModuleList(
-            #     [MSPABlock(embed_dims[3], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-            #      range(extra_depths[3])])
-            # self.extra_norm4_diff4 = ConvLayerNorm(embed_dims[3])
 
         if self.num_modals > 0:
             num_heads = [1, 2, 5, 8]
@@ -513,40 +361,27 @@ class CMNeXt(nn.Module):
         outs = []
 
         # stage 1
-        # x_cam, H, W = self.patch_embed1(x_cam)
-        # for blk in self.block1:
-        #     x_cam = blk(x_cam, H, W)
-        # x1_cam = self.norm1(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-        x_cam = self.lora_sam1.sam.image_encoder(x_cam)
-        x1_cam = F.interpolate(x_cam, size=(256, 256), mode="bilinear", align_corners=False)
-        x1_cam = self.change_out_ch1(x1_cam)
-        x1_cam = self.norm1(x1_cam)
+        x_cam, H, W = self.patch_embed1(x_cam)
+        for blk in self.block1:
+            x_cam = blk(x_cam, H, W)
+        x1_cam = self.norm1(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+        x1_cam_lora = self.lora_downsample_layer[0](x_cam)
+        x1_cam += x1_cam_lora
+        x1_cam = self.lora_norm[0](x1_cam.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
         if self.num_modals > 0:
-            # x_ext, loss_moe1 = self.moe1(x_ext)
-            # x_ext, _, _ = self.extra_downsample_layers[0](x_ext)
-            # x_f = self.fusion1(x_ext)
-            # x_f = self.tokenselect(x_ext, self.extra_score_predictor[0]) if self.num_modals > 1 else x_ext[0]
-            # x_ext, x_f, loss_moe1 = self.allinone_moe1(x_ext)
-            # x_ext, x_f, loss_moe1 = self.moe1(x_ext)
-            x_ext, x_f, loss_moe1 = self.moe1(x_ext)
+            x_ext_moe, x_f, loss_moe1 = self.moe1(x_ext)
             for blk in self.shared_extra_block1:
                 x_f = blk(x_f)
-
-            for blk1 in self.diff1_extra_block1:
-                x_ext[0] = blk1(x_ext[0])
-            for blk2 in self.diff2_extra_block1:
-                x_ext[1] = blk2(x_ext[1])
-            for blk3 in self.diff3_extra_block1:
-                x_ext[2] = blk3(x_ext[2])
-            # for blk4 in self.extra_block1_diff4:
-            #     x_ext[3] = blk4(x_ext[3])
-
-            x_ext[0] = self.diff1_extra_norm1(x_ext[0])
-            x_ext[1] = self.diff2_extra_norm1(x_ext[1])
-            x_ext[2] = self.diff3_extra_norm1(x_ext[2])
-            # x_ext[3] = self.extra_norm1_diff4(x_ext[3])
             x1_f = self.shared_extra_norm1(x_f)
+            for i in range(len(self.num_modals)):
+                x_ext[i], _, _ = self.patch_embed1(x_ext[i])
+                for blk in self.block1:
+                    x_ext[i] = blk(x_ext[i], H, W)
+                x_ext[i] = self.norm1(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+                x_ext[i] += x_ext_moe[i]
+                x_ext[i] = self.lora_extra_norm[i][0](x_ext[i])
+
             x1_cam, x1_f = self.FRMs[0](x1_cam, x1_f)
             x_fused = self.FFMs[0](x1_cam, x1_f)
 
@@ -560,44 +395,28 @@ class CMNeXt(nn.Module):
             outs.append(x1_cam)
 
         # stage 2
-        # x_cam, H, W = self.patch_embed2(x1_cam)
-        # for blk in self.block2:
-        #     x_cam = blk(x_cam, H, W)
-        # x2_cam = self.norm2(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
-        x1_cam = self.change_in_ch1(x1_cam)
-        x1_cam = F.interpolate(x1_cam, size=(1024, 1024), mode="bilinear", align_corners=False)
-        x_cam = self.lora_sam2.sam.image_encoder(x1_cam)
-        x2_cam = F.interpolate(x_cam, size=(128, 128), mode="bilinear", align_corners=False)
-        x2_cam = self.change_out_ch2(x2_cam)
-        x2_cam = self.norm2(x2_cam)
+        x_cam, H, W = self.patch_embed2(x1_cam)
+        for blk in self.block2:
+            x_cam = blk(x_cam, H, W)
+        x2_cam = self.norm2(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
         if self.num_modals > 0:
-            # x_ext, loss_moe2 = self.moe2(x_ext)
-            # x_ext, _, _ = self.extra_downsample_layers[1](x_ext)
-            # print(x_ext[0].shape)
-            # x_f = self.tokenselect(x_ext, self.extra_score_predictor[1]) if self.num_modals > 1 else x_ext[0]
-            # x_ext, _, _ = self.extra_downsample_layers[0](x_ext)
-            # x_f = self.fusion2(x_ext)
-            # x_ext, x_f, loss_moe2 = self.allinone_moe2(x_ext)
-            x_ext, x_f, loss_moe2 = self.moe2(x_ext)
-            for blk in self.shared_extra_block2:
-                x_f = blk(x_f)
+            x_ext[0], _, _ = self.patch_embed2(x_ext[0])
+            for blk in self.block2:
+                x_ext[0] = blk(x_ext[0], H, W)
+            x_ext[0] = self.norm2(x_ext[0]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-            for blk1 in self.diff1_extra_block2:
-                x_ext[0] = blk1(x_ext[0])
-            for blk2 in self.diff2_extra_block2:
-                x_ext[1] = blk2(x_ext[1])
-            for blk3 in self.diff3_extra_block2:
-                x_ext[2] = blk3(x_ext[2])
-            # for blk4 in self.extra_block2_diff4:
-            #     x_ext[3] = blk4(x_ext[3])
+            x_ext[1], _, _ = self.patch_embed2(x_ext[1])
+            for blk in self.block2:
+                x_ext[1] = blk(x_ext[1], H, W)
+            x_ext[1] = self.norm2(x_ext[1]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-            x_ext[0] = self.diff1_extra_norm2(x_ext[0])
-            x_ext[1] = self.diff2_extra_norm2(x_ext[1])
-            x_ext[2] = self.diff3_extra_norm2(x_ext[2])
-            # x_ext[3] = self.extra_norm2_diff4(x_ext[3])
-            x2_f = self.shared_extra_norm2(x_f)
+            x_ext[2], _, _ = self.patch_embed2(x_ext[2])
+            for blk in self.block2:
+                x_ext[2] = blk(x_ext[2], H, W)
+            x_ext[2] = self.norm2(x_ext[2]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            # x2_f = self.shared_extra_norm2(x_f)
             x2_cam, x2_f = self.FRMs[1](x2_cam, x2_f)
             x_fused = self.FFMs[1](x2_cam, x2_f)
 
@@ -615,9 +434,8 @@ class CMNeXt(nn.Module):
         # for blk in self.block3:
         #     x_cam = blk(x_cam, H, W)
         # x3_cam = self.norm3(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-        x2_cam = self.change_in_ch2(x2_cam)
-        x2_cam = F.interpolate(x2_cam, size=(1024, 1024), mode="bilinear", align_corners=False)
-        x_cam = self.lora_sam3.sam.image_encoder(x2_cam)
+        x_cam = self.lora_sam3(x2_cam_sam.permute(0, 2, 3, 1))
+        x3_cam_sam = deepcopy(x_cam)
         x3_cam = self.change_out_ch3(x_cam)
         x3_cam = self.norm3(x3_cam)
         if self.num_modals > 0:
@@ -663,9 +481,7 @@ class CMNeXt(nn.Module):
         # for blk in self.block4:
         #     x_cam = blk(x_cam, H, W)
         # x4_cam = self.norm4(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-        x3_cam = self.change_in_ch3(x3_cam)
-        x3_cam = F.interpolate(x3_cam, size=(1024, 1024), mode="bilinear", align_corners=False)
-        x_cam = self.lora_sam4.sam.image_encoder(x3_cam)
+        x_cam = self.lora_sam4(x3_cam_sam.permute(0, 2, 3, 1))
         x4_cam = F.interpolate(x_cam, size=(32, 32), mode="bilinear", align_corners=False)
         x4_cam = self.change_out_ch4(x4_cam)
         x4_cam = self.norm4(x4_cam)
@@ -679,7 +495,7 @@ class CMNeXt(nn.Module):
             # x_ext, x_f, loss_moe4 = self.allinone_moe4(x_ext)
             x_ext, x_f, loss_moe4 = self.moe4(x_ext)
             for blk in self.shared_extra_block4:
-                x_f = blk(x_f, H, W)
+                x_f = blk(x_f)
 
             for blk1 in self.diff1_extra_block4:
                 x_ext[0] = blk1(x_ext[0])

@@ -743,7 +743,6 @@ class MoE_lora_new(nn.Module):
 
 
     def forward(self, xs, loss_coef=1e-2):
-        total_expert_loss = 0
         total_loss = 0
         final_shared_outputs = []
         final_diff_outputs = []
@@ -754,7 +753,7 @@ class MoE_lora_new(nn.Module):
             importance = gates.sum(0)
             loss = self.cv_squared(importance) + self.cv_squared(load)
             loss *= loss_coef
-            total_expert_loss += loss
+            total_loss += loss
 
             dispatcher = SparseDispatcher(self.num_experts, gates)
             shared_x = self.shared_expert(x)
@@ -774,21 +773,21 @@ class MoE_lora_new(nn.Module):
         shared_stacked_tensor = torch.stack(final_shared_outputs)
         shared_mean_tensor = torch.mean(shared_stacked_tensor, dim=0)
 
-        # Compute uniformity loss (mean squared error between shared and individual features)
-        uniformity_loss = 0
-        for diff_output in final_diff_outputs:
-            uniformity_loss += F.mse_loss(shared_mean_tensor, diff_output)
-
-        # Compute distinctiveness loss (KL divergence between individual features)
-        distinctiveness_loss = 0
-        for i in range(len(final_diff_outputs)):
-            for j in range(i + 1, len(final_diff_outputs)):
-                p = F.log_softmax(final_diff_outputs[i].view(final_diff_outputs[i].size(0), -1), dim=-1)
-                q = F.softmax(final_diff_outputs[j].view(final_diff_outputs[j].size(0), -1), dim=-1)
-                distinctiveness_loss += self.compute_symmetric_kl_loss(p, q)
-
-        # Ensure total_loss is non-negative and balanced
-        total_loss += uniformity_loss + 0.1 * distinctiveness_loss + total_expert_loss
+        # # Compute uniformity loss (mean squared error between shared and individual features)
+        # uniformity_loss = 0
+        # for diff_output in final_diff_outputs:
+        #     uniformity_loss += F.mse_loss(shared_mean_tensor, diff_output)
+        #
+        # # Compute distinctiveness loss (KL divergence between individual features)
+        # distinctiveness_loss = 0
+        # for i in range(len(final_diff_outputs)):
+        #     for j in range(i + 1, len(final_diff_outputs)):
+        #         p = F.log_softmax(final_diff_outputs[i].view(final_diff_outputs[i].size(0), -1), dim=-1)
+        #         q = F.softmax(final_diff_outputs[j].view(final_diff_outputs[j].size(0), -1), dim=-1)
+        #         distinctiveness_loss += self.compute_symmetric_kl_loss(p, q)
+        #
+        # # Ensure total_loss is non-negative and balanced
+        # total_loss += uniformity_loss + 0.1 * distinctiveness_loss + total_expert_loss
 
 
 
