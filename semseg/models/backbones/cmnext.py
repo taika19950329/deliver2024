@@ -13,9 +13,9 @@ from semseg.utils.utils import nchw_to_nlc, nlc_to_nchw
 
 from semseg.models.modules.moe_lora import MoE_lora, AllInOne_lora, MoE_lora_new, MoE_lora_rgb, AttentionWeightedSum, ConcatAndConv, \
     FinalConvProcessor
-from segment_anything import sam_model_registry
-from semseg.models.modules.sam_lora import *
-from semseg.models.modules.BasicBlock import TF_3D
+# from segment_anything import sam_model_registry
+# from semseg.models.modules.sam_lora import *
+# from semseg.models.modules.BasicBlock import TF_3D
 
 import numpy as np
 from copy import deepcopy
@@ -105,25 +105,25 @@ class PatchEmbedParallel(nn.Module):
 
 
 class PatchEmbedSingle(nn.Module):
-    def __init__(self, c1=3, c2=32, patch_size=7, stride=4, padding=0):
+    def __init__(self, c1=3, c2=32, patch_size=7, stride=4, padding=0, rank=4):
         super().__init__()
-        # 定义卷积层
-        self.proj = nn.Conv2d(c1, c2, patch_size, stride, padding)
+        # LoRA模块：使用低秩分解替代一部分参数
+        self.lora_A = nn.Conv2d(c1, rank, kernel_size=1, stride=1, padding=0, bias=False)
+        self.lora_B = nn.Conv2d(rank, c2, kernel_size=patch_size, stride=stride, padding=padding, bias=False)
         # 定义归一化层
         self.norm = nn.LayerNorm(c2)  # 对通道维度进行归一化
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # 卷积操作
-        x = self.proj(x)
-        # 获取特征图的高度和宽度
-        _, _, H, W = x.shape
+        # Lora路径
+        x = self.lora_A(x)
+        x = self.lora_B(x)
         # 将通道维度移动到最后以便于 LayerNorm 操作
         x = x.permute(0, 2, 3, 1)  # 从 (B, C, H, W) -> (B, H, W, C)
         # 归一化操作
         x = self.norm(x)
         # 恢复原始维度顺序
         x = x.permute(0, 3, 1, 2)  # 从 (B, H, W, C) -> (B, C, H, W)
-        return x, H, W
+        return x
 
 
 class Block(nn.Module):
@@ -345,6 +345,15 @@ class CMNeXt(nn.Module):
                 FFM(dim=embed_dims[2], reduction=1, num_heads=num_heads[2], norm_layer=nn.BatchNorm2d),
                 FFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=nn.BatchNorm2d)])
 
+        # 冻结参数debug
+        # for layer in [self.shared_extra_block1, self.shared_extra_block2, self.shared_extra_block3, self.shared_extra_block4,
+        #               self.shared_extra_norm1, self.shared_extra_norm2, self.shared_extra_norm3, self.shared_extra_norm4,
+        #               self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
+        #               self.FRMs, self.FFMs,
+        #               self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
+        #     for param in layer.parameters():
+        #         param.requires_grad = False
+
     def tokenselect(self, x_ext, module):
         x_scores = module(x_ext)
         for i in range(len(x_ext)):
@@ -361,12 +370,12 @@ class CMNeXt(nn.Module):
         outs = []
 
         # stage 1
-        x_cam, H, W = self.patch_embed1(x_cam)
+        x_cam_ori, H, W = self.patch_embed1(x_cam)
         for blk in self.block1:
-            x_cam = blk(x_cam, H, W)
-        x1_cam = self.norm1(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+            x_cam_ori = blk(x_cam_ori, H, W)
+        x1_cam_ori = self.norm1(x_cam_ori).reshape(B, H, W, -1).permute(0, 3, 1, 2)
         x1_cam_lora = self.lora_downsample_layer[0](x_cam)
-        x1_cam += x1_cam_lora
+        x1_cam = x1_cam_ori + x1_cam_lora
         x1_cam = self.lora_norm[0](x1_cam.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
         if self.num_modals > 0:
@@ -374,13 +383,13 @@ class CMNeXt(nn.Module):
             for blk in self.shared_extra_block1:
                 x_f = blk(x_f)
             x1_f = self.shared_extra_norm1(x_f)
-            for i in range(len(self.num_modals)):
-                x_ext[i], _, _ = self.patch_embed1(x_ext[i])
+            for i in range(self.num_modals):
+                x_ext_extra_ori, _, _ = self.patch_embed1(x_ext[i])
                 for blk in self.block1:
-                    x_ext[i] = blk(x_ext[i], H, W)
-                x_ext[i] = self.norm1(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-                x_ext[i] += x_ext_moe[i]
-                x_ext[i] = self.lora_extra_norm[i][0](x_ext[i])
+                    x_ext_extra_ori = blk(x_ext_extra_ori, H, W)
+                x_ext_extra_ori = self.norm1(x_ext_extra_ori).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+                x_ext[i] = x_ext_extra_ori + x_ext_moe[i]
+                x_ext[i] = self.lora_extra_norm[i][0](x_ext[i].permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
             x1_cam, x1_f = self.FRMs[0](x1_cam, x1_f)
             x_fused = self.FFMs[0](x1_cam, x1_f)
@@ -395,26 +404,26 @@ class CMNeXt(nn.Module):
             outs.append(x1_cam)
 
         # stage 2
-        x_cam, H, W = self.patch_embed2(x1_cam)
+        x1_cam_ori, H, W = self.patch_embed2(x1_cam)
         for blk in self.block2:
-            x_cam = blk(x_cam, H, W)
-        x2_cam = self.norm2(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+            x1_cam_ori = blk(x1_cam_ori, H, W)
+        x2_cam_ori = self.norm2(x1_cam_ori).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+        x2_cam_lora = self.lora_downsample_layer[1](x1_cam)
+        x2_cam = x2_cam_ori + x2_cam_lora
+        x2_cam = self.lora_norm[1](x2_cam.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
         if self.num_modals > 0:
-            x_ext[0], _, _ = self.patch_embed2(x_ext[0])
-            for blk in self.block2:
-                x_ext[0] = blk(x_ext[0], H, W)
-            x_ext[0] = self.norm2(x_ext[0]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
-            x_ext[1], _, _ = self.patch_embed2(x_ext[1])
-            for blk in self.block2:
-                x_ext[1] = blk(x_ext[1], H, W)
-            x_ext[1] = self.norm2(x_ext[1]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
-            x_ext[2], _, _ = self.patch_embed2(x_ext[2])
-            for blk in self.block2:
-                x_ext[2] = blk(x_ext[2], H, W)
-            x_ext[2] = self.norm2(x_ext[2]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+            x_ext_moe, x_f, loss_moe2 = self.moe2(x_ext)
+            for blk in self.shared_extra_block2:
+                x_f = blk(x_f)
+            x2_f = self.shared_extra_norm2(x_f)
+            for i in range(self.num_modals):
+                x_ext_extra_ori, _, _ = self.patch_embed2(x_ext[i])
+                for blk in self.block2:
+                    x_ext_extra_ori = blk(x_ext_extra_ori, H, W)
+                x_ext_extra_ori = self.norm2(x_ext_extra_ori).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+                x_ext[i] = x_ext_extra_ori + x_ext_moe[i]
+                x_ext[i] = self.lora_extra_norm[i][1](x_ext[i].permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
             # x2_f = self.shared_extra_norm2(x_f)
             x2_cam, x2_f = self.FRMs[1](x2_cam, x2_f)
@@ -430,40 +439,27 @@ class CMNeXt(nn.Module):
             outs.append(x2_cam)
 
         # stage 3
-        # x_cam, H, W = self.patch_embed3(x2_cam)
-        # for blk in self.block3:
-        #     x_cam = blk(x_cam, H, W)
-        # x3_cam = self.norm3(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-        x_cam = self.lora_sam3(x2_cam_sam.permute(0, 2, 3, 1))
-        x3_cam_sam = deepcopy(x_cam)
-        x3_cam = self.change_out_ch3(x_cam)
-        x3_cam = self.norm3(x3_cam)
+        x_cam_ori, H, W = self.patch_embed3(x2_cam)
+        for blk in self.block3:
+            x_cam_ori = blk(x_cam_ori, H, W)
+        x3_cam_ori = self.norm3(x_cam_ori).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+        x3_cam_lora = self.lora_downsample_layer[2](x2_cam)
+        x3_cam = x3_cam_ori + x3_cam_lora
+        x3_cam = self.lora_norm[2](x3_cam.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+
         if self.num_modals > 0:
-            # x_ext, loss_moe3 = self.moe3(x_ext)
-            # x_ext, _, _ = self.extra_downsample_layers[2](x_ext)
-            # print(x_ext[0].shape)
-            # x_f = self.tokenselect(x_ext, self.extra_score_predictor[2]) if self.num_modals > 1 else x_ext[0]
-            # x_ext, _, _ = self.extra_downsample_layers[0](x_ext)
-            # x_f = self.fusion3(x_ext)
-            # x_ext, x_f, loss_moe3 = self.allinone_moe3(x_ext)
-            x_ext, x_f, loss_moe3 = self.moe3(x_ext)
+            x_ext_moe, x_f, loss_moe3 = self.moe3(x_ext)
             for blk in self.shared_extra_block3:
                 x_f = blk(x_f)
-
-            for blk1 in self.diff1_extra_block3:
-                x_ext[0] = blk1(x_ext[0])
-            for blk2 in self.diff2_extra_block3:
-                x_ext[1] = blk2(x_ext[1])
-            for blk3 in self.diff3_extra_block3:
-                x_ext[2] = blk3(x_ext[2])
-            # for blk4 in self.extra_block3_diff4:
-            #     x_ext[3] = blk4(x_ext[3])
-
-            x_ext[0] = self.diff1_extra_norm3(x_ext[0])
-            x_ext[1] = self.diff2_extra_norm3(x_ext[1])
-            x_ext[2] = self.diff3_extra_norm3(x_ext[2])
-            # x_ext[3] = self.extra_norm3_diff4(x_ext[3])
             x3_f = self.shared_extra_norm3(x_f)
+            for i in range(self.num_modals):
+                x_ext_extra_ori, _, _ = self.patch_embed3(x_ext[i])
+                for blk in self.block3:
+                    x_ext_extra_ori = blk(x_ext_extra_ori, H, W)
+                x_ext_extra_ori = self.norm3(x_ext_extra_ori).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+                x_ext[i] = x_ext_extra_ori + x_ext_moe[i]
+                x_ext[i] = self.lora_extra_norm[i][2](x_ext[i].permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+
             x3_cam, x3_f = self.FRMs[2](x3_cam, x3_f)
             x_fused = self.FFMs[2](x3_cam, x3_f)
 
@@ -477,41 +473,27 @@ class CMNeXt(nn.Module):
             outs.append(x3_cam)
 
         # stage 4
-        # x_cam, H, W = self.patch_embed4(x3_cam)
-        # for blk in self.block4:
-        #     x_cam = blk(x_cam, H, W)
-        # x4_cam = self.norm4(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-        x_cam = self.lora_sam4(x3_cam_sam.permute(0, 2, 3, 1))
-        x4_cam = F.interpolate(x_cam, size=(32, 32), mode="bilinear", align_corners=False)
-        x4_cam = self.change_out_ch4(x4_cam)
-        x4_cam = self.norm4(x4_cam)
+        x_cam_ori, H, W = self.patch_embed4(x3_cam)
+        for blk in self.block4:
+            x_cam_ori = blk(x_cam_ori, H, W)
+        x4_cam_ori = self.norm4(x_cam_ori).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+        x4_cam_lora = self.lora_downsample_layer[3](x3_cam)
+        x4_cam = x4_cam_ori + x4_cam_lora
+        x4_cam = self.lora_norm[3](x4_cam.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+
         if self.num_modals > 0:
-            # x_ext, loss_moe4 = self.moe4(x_ext)
-            # print(x_ext[0].shape)
-            # x_ext, _, _ = self.extra_downsample_layers[3](x_ext)
-            # x_f = self.tokenselect(x_ext, self.extra_score_predictor[3]) if self.num_modals > 1 else x_ext[0]
-            # x_ext, _, _ = self.extra_downsample_layers[0](x_ext)
-            # x_f = self.fusion4(x_ext)
-            # x_ext, x_f, loss_moe4 = self.allinone_moe4(x_ext)
-            x_ext, x_f, loss_moe4 = self.moe4(x_ext)
+            x_ext_moe, x_f, loss_moe4 = self.moe4(x_ext)
             for blk in self.shared_extra_block4:
                 x_f = blk(x_f)
-
-            for blk1 in self.diff1_extra_block4:
-                x_ext[0] = blk1(x_ext[0])
-            for blk2 in self.diff2_extra_block4:
-                x_ext[1] = blk2(x_ext[1])
-            for blk3 in self.diff3_extra_block4:
-                x_ext[2] = blk3(x_ext[2])
-            # for blk4 in self.extra_block4_diff4:
-            #     x_ext[3] = blk4(x_ext[3])
-
-            x_ext[0] = self.diff1_extra_norm4(x_ext[0])
-            x_ext[1] = self.diff2_extra_norm4(x_ext[1])
-            x_ext[2] = self.diff3_extra_norm4(x_ext[2])
-            # x_ext[3] = self.extra_norm4_diff4(x_ext[3])
             x4_f = self.shared_extra_norm4(x_f)
-            # print("4", x4_cam.shape, x4_f.shape)
+            for i in range(self.num_modals):
+                x_ext_extra_ori, _, _ = self.patch_embed4(x_ext[i])
+                for blk in self.block4:
+                    x_ext_extra_ori = blk(x_ext_extra_ori, H, W)
+                x_ext_extra_ori = self.norm4(x_ext_extra_ori).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+                x_ext[i] = x_ext_extra_ori + x_ext_moe[i]
+                x_ext[i] = self.lora_extra_norm[i][3](x_ext[i].permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+
             x4_cam, x4_f = self.FRMs[3](x4_cam, x4_f)
             x_fused = self.FFMs[3](x4_cam, x4_f)
 

@@ -62,13 +62,13 @@ def main(cfg, gpu, save_dir):
         # model.load_state_dict(current_state_dict)
 
         for name, param in model.named_parameters():
-            # if ('patch_embed' in name.split(".")[1] or 'block' in name.split(".")[1] or 'norm' in name.split(".")[1]) and ('extra' not in name.split(".")[1]):
-            if 'patch_embed' in name.split(".")[1] or 'block' in name.split(".")[1] or 'norm' in name.split(".")[1]:
+            if (('patch_embed' in name.split(".")[1]) or ('block' in name.split(".")[1]) or (
+                    'norm' in name.split(".")[1])) and ('extra' not in name.split(".")[1]):
                 param.requires_grad = False
             else:
                 param.requires_grad = True
             print(f"Layer: {name} | Size: {param.size()} | Requires Grad: {param.requires_grad}")
-            if 'diff1_extra_block1' == name.split(".")[1]:
+            if 'block1' == name.split(".")[1]:
                 print(param)
         raise Exception
 
