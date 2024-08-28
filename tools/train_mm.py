@@ -63,7 +63,8 @@ def main(cfg, gpu, save_dir):
 
         for name, param in model.named_parameters():
             if (('patch_embed' in name.split(".")[1]) or ('block' in name.split(".")[1]) or (
-                    'norm' in name.split(".")[1])) and ('extra' not in name.split(".")[1]):
+                    'norm' in name.split(".")[1])) and ('extra' not in name.split(".")[1])\
+                    and ('lora' not in name.split(".")[1]):
                 param.requires_grad = False
             else:
                 param.requires_grad = True
