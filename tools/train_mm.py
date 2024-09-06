@@ -68,10 +68,13 @@ def main(cfg, gpu, save_dir):
                 param.requires_grad = False
             else:
                 param.requires_grad = True
-            print(f"Layer: {name} | Size: {param.size()} | Requires Grad: {param.requires_grad}")
-            if 'block1' == name.split(".")[1]:
-                print(param)
-        raise Exception
+            if 'lora' in name:
+                param.requires_grad = True
+        #     print(f"Layer: {name} | Size: {param.size()} | Requires Grad: {param.requires_grad}")
+        # #     if 'depth_block1' == name.split(".")[1]:
+        # #         print(f"Layer: {name} | Size: {param.size()} | Requires Grad: {param.requires_grad}")
+        # #         print(param)
+        # raise Exception
 
     model = model.to(device)
     

@@ -65,16 +65,14 @@ class ConvProcessor(nn.Module):
 
 
 class PatchEmbedParallel(nn.Module):
-    def __init__(self, c1=3, c2=32, patch_size=7, stride=4, padding=0, rank=4):
+    def __init__(self, c1=3, c2=32, patch_size=7, stride=4, padding=0):
         super().__init__()
-        # LoRA模块：使用低秩分解来减少参数量
-        self.lora_A = nn.Conv2d(c1, rank, kernel_size=1, stride=1, padding=0, bias=False)
-        self.lora_B = nn.Conv2d(rank, c2, kernel_size=patch_size, stride=stride, padding=padding, bias=False)
-
+        self.proj = nn.Conv2d(c1, c2, patch_size, stride, padding)   # padding=(ps[0]//2, ps[1]//2)
         self.norm = ConvLayerNorm(c2)
 
     def forward(self, x: Tensor) -> Tensor:
-        x = self.lora_B(self.lora_A(x))
+        x = self.proj(x)
+        _, _, H, W = x.shape
         x = self.norm(x)
         return x
 
@@ -766,6 +764,8 @@ class MoE_lora_new(nn.Module):
             # gates = dispatcher.expert_to_gates()
 
             expert_outputs_x = [self.experts[i](expert_inputs_x[i]) for i in range(self.num_experts)]
+            # print(expert_outputs_x.shape)
+
 
             x_res = dispatcher.combine(expert_outputs_x, top_k_logits)
 
@@ -791,8 +791,6 @@ class MoE_lora_new(nn.Module):
 
         # Ensure total_loss is non-negative and balanced
         total_loss += uniformity_loss + 0.1 * distinctiveness_loss + total_expert_loss
-
-
 
         return final_diff_outputs, shared_mean_tensor, total_loss
 
@@ -1014,15 +1012,19 @@ class MoE_lora_rgb(nn.Module):
         # Compute uniformity loss (mean squared error between shared and individual features)
         uniformity_loss = 0
         for diff_output in final_diff_outputs:
-            uniformity_loss += F.mse_loss(shared_mean_tensor, diff_output)
+            p = F.log_softmax(shared_mean_tensor.view(shared_mean_tensor.size(0), -1), dim=-1)
+            q = F.softmax(diff_output.view(diff_output.size(0), -1), dim=-1)
+            uniformity_loss += self.compute_symmetric_kl_loss(p, q)
 
         # Compute distinctiveness loss (KL divergence between individual features)
         distinctiveness_loss = 0
+        epsilon = 1e-6
         for i in range(len(final_diff_outputs)):
             for j in range(i + 1, len(final_diff_outputs)):
                 p = F.log_softmax(final_diff_outputs[i].view(final_diff_outputs[i].size(0), -1), dim=-1)
                 q = F.softmax(final_diff_outputs[j].view(final_diff_outputs[j].size(0), -1), dim=-1)
-                distinctiveness_loss += self.compute_symmetric_kl_loss(p, q)
+                kl_loss = self.compute_symmetric_kl_loss(p, q)
+                distinctiveness_loss += 1 / (kl_loss + epsilon)
 
         # Ensure total_loss is non-negative and balanced
         total_loss += uniformity_loss + 0.1 * distinctiveness_loss + total_expert_loss
@@ -1033,28 +1035,51 @@ class MoE_lora_rgb(nn.Module):
 
 
 
+# class AttentionWeightedSum(nn.Module):
+#     def __init__(self):
+#         super(AttentionWeightedSum, self).__init__()
+#
+#     def forward(self, tensor_list, reference_tensor):
+#         # 初始化一个张量来存储加权结果
+#         weighted_tensors = []
+#
+#         # 计算每个张量的注意力权重并应用
+#         for tensor in tensor_list:
+#             # 计算注意力权重（点积）
+#             attention_scores = torch.sum(reference_tensor * tensor, dim=(1, 2, 3), keepdim=True)
+#
+#             # 归一化权重（使用 softmax）
+#             attention_weights = F.softmax(attention_scores, dim=0)
+#
+#             # 应用权重
+#             weighted_tensor = tensor * attention_weights
+#             weighted_tensors.append(weighted_tensor)
+#
+#
+#         return weighted_tensors
+
 class AttentionWeightedSum(nn.Module):
     def __init__(self):
         super(AttentionWeightedSum, self).__init__()
 
     def forward(self, tensor_list, reference_tensor):
-        # 初始化一个张量来存储加权结果
-        weighted_tensors = []
+        assert len(tensor_list) == 3, "D E L"
 
-        # 计算每个张量的注意力权重并应用
+        # store each tensor attn weight
+        attention_scores = []
+
+        # cal attn score
         for tensor in tensor_list:
-            # 计算注意力权重（点积）
-            attention_scores = torch.sum(reference_tensor * tensor, dim=(1, 2, 3), keepdim=True)
+            score = torch.sum(tensor)
+            attention_scores.append(score)
 
-            # 归一化权重（使用 softmax）
-            attention_weights = F.softmax(attention_scores, dim=0)
+        # softmax norm
+        attention_scores = torch.tensor(attention_scores)
+        attention_weights = F.softmax(attention_scores, dim=0)
 
-            # 应用权重
-            weighted_tensor = tensor * attention_weights
-            weighted_tensors.append(weighted_tensor)
+        weighted_reference_tensors = [w * reference_tensor for w in attention_weights]
 
-
-        return weighted_tensors
+        return weighted_reference_tensors
 
 
 

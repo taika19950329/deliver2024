@@ -11,7 +11,7 @@ from semseg.models.modules.ffm import ChannelEmbed
 from semseg.models.modules.mspa import MSPABlock
 from semseg.utils.utils import nchw_to_nlc, nlc_to_nchw
 
-from semseg.models.modules.moe_lora import MoE_lora, AllInOne_lora, MoE_lora_new, MoE_lora_rgb, AttentionWeightedSum, ConcatAndConv, \
+from semseg.models.modules.moe_lora import MoE_lora_new, AttentionWeightedSum, ConcatAndConv, \
     FinalConvProcessor
 # from segment_anything import sam_model_registry
 # from semseg.models.modules.sam_lora import *
@@ -21,15 +21,103 @@ import numpy as np
 from copy import deepcopy
 
 
+# class Attention(nn.Module):
+#     def __init__(self, dim, head, sr_ratio):
+#         super().__init__()
+#         self.head = head
+#         self.sr_ratio = sr_ratio
+#         self.scale = (dim // head) ** -0.5
+#         self.q = nn.Linear(dim, dim)
+#         self.kv = nn.Linear(dim, dim * 2)
+#         self.proj = nn.Linear(dim, dim)
+#
+#         if sr_ratio > 1:
+#             self.sr = nn.Conv2d(dim, dim, sr_ratio, sr_ratio)
+#             self.norm = nn.LayerNorm(dim)
+#
+#     def forward(self, x: Tensor, H, W) -> Tensor:
+#         B, N, C = x.shape
+#         q = self.q(x).reshape(B, N, self.head, C // self.head).permute(0, 2, 1, 3)
+#
+#         if self.sr_ratio > 1:
+#             x = x.permute(0, 2, 1).reshape(B, C, H, W)
+#             x = self.sr(x).reshape(B, C, -1).permute(0, 2, 1)
+#             x = self.norm(x)
+#
+#         k, v = self.kv(x).reshape(B, -1, 2, self.head, C // self.head).permute(2, 0, 3, 1, 4)
+#
+#         attn = (q @ k.transpose(-2, -1)) * self.scale
+#         attn = attn.softmax(dim=-1)
+#
+#         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+#         x = self.proj(x)
+#         return x
+
+class _LoRA_q(nn.Module):
+    def __init__(self, q: nn.Module, linear_a_q: nn.Module, linear_b_q: nn.Module):
+        super().__init__()
+        self.q = q
+        self.linear_a_q = linear_a_q
+        self.linear_b_q = linear_b_q
+        self.dim = q.in_features
+
+    def forward(self, x):
+        q = self.q(x)
+        new_q = self.linear_b_q(self.linear_a_q(x))
+        return q + new_q
+
+
+class _LoRA_kv(nn.Module):
+    def __init__(self, kv: nn.Module, linear_a_k: nn.Module, linear_b_k: nn.Module, linear_a_v: nn.Module, linear_b_v: nn.Module):
+        super().__init__()
+        self.kv = kv
+        self.linear_a_k = linear_a_k
+        self.linear_b_k = linear_b_k
+        self.linear_a_v = linear_a_v
+        self.linear_b_v = linear_b_v
+        self.dim = kv.in_features
+
+    def forward(self, x):
+        kv = self.kv(x)
+        k, v = kv.chunk(2, dim=-1)
+        new_k = self.linear_b_k(self.linear_a_k(x))
+        new_v = self.linear_b_v(self.linear_a_v(x))
+        k = k + new_k
+        v = v + new_v
+        return torch.cat((k, v), dim=-1)
+
+
 class Attention(nn.Module):
-    def __init__(self, dim, head, sr_ratio):
+    def __init__(self, dim, head, sr_ratio, r):
         super().__init__()
         self.head = head
         self.sr_ratio = sr_ratio
         self.scale = (dim // head) ** -0.5
+
+        # Original Q and KV linear layers
         self.q = nn.Linear(dim, dim)
         self.kv = nn.Linear(dim, dim * 2)
         self.proj = nn.Linear(dim, dim)
+
+        # LoRA configuration
+        self.lora_a_q = nn.Linear(dim, r, bias=False)
+        self.lora_b_q = nn.Linear(r, dim, bias=False)
+        self.lora_a_v = nn.Linear(dim, r, bias=False)
+        self.lora_b_v = nn.Linear(r, dim, bias=False)
+
+        # LoRA layers
+        self.lora_q = _LoRA_q(
+            self.q,
+            self.lora_a_q,
+            self.lora_b_q
+        )
+        self.lora_kv = _LoRA_kv(
+            self.kv,
+            self.lora_a_v,
+            self.lora_b_v,
+            self.lora_a_v,  # Reusing the same for k and v
+            self.lora_b_v
+        )
 
         if sr_ratio > 1:
             self.sr = nn.Conv2d(dim, dim, sr_ratio, sr_ratio)
@@ -37,15 +125,20 @@ class Attention(nn.Module):
 
     def forward(self, x: Tensor, H, W) -> Tensor:
         B, N, C = x.shape
-        q = self.q(x).reshape(B, N, self.head, C // self.head).permute(0, 2, 1, 3)
+
+        # Apply LoRA to Q
+        q = self.lora_q(x).reshape(B, N, self.head, C // self.head).permute(0, 2, 1, 3)
 
         if self.sr_ratio > 1:
+            # Apply spatial reduction and normalization
             x = x.permute(0, 2, 1).reshape(B, C, H, W)
             x = self.sr(x).reshape(B, C, -1).permute(0, 2, 1)
             x = self.norm(x)
 
-        k, v = self.kv(x).reshape(B, -1, 2, self.head, C // self.head).permute(2, 0, 3, 1, 4)
+        # Apply LoRA to KV
+        k, v = self.lora_kv(x).reshape(B, -1, 2, self.head, C // self.head).permute(2, 0, 3, 1, 4)
 
+        # Compute attention
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = attn.softmax(dim=-1)
 
@@ -66,15 +159,51 @@ class DWConv(nn.Module):
         return x.flatten(2).transpose(1, 2)
 
 
+# class MLP(nn.Module):
+#     def __init__(self, c1, c2):
+#         super().__init__()
+#         self.fc1 = nn.Linear(c1, c2)
+#         self.dwconv = DWConv(c2)
+#         self.fc2 = nn.Linear(c2, c1)
+#
+#     def forward(self, x: Tensor, H, W) -> Tensor:
+#         return self.fc2(F.gelu(self.dwconv(self.fc1(x), H, W)))
+
+
 class MLP(nn.Module):
-    def __init__(self, c1, c2):
+    def __init__(self, c1, c2, r):
         super().__init__()
         self.fc1 = nn.Linear(c1, c2)
-        self.dwconv = DWConv(c2)
         self.fc2 = nn.Linear(c2, c1)
+        self.dwconv = DWConv(c2)
+
+        # LoRA layers for fc1 and fc2
+        self.lora_a_fc1 = nn.Linear(c1, r, bias=False)
+        self.lora_b_fc1 = nn.Linear(r, c2, bias=False)
+        self.lora_a_fc2 = nn.Linear(c2, r, bias=False)
+        self.lora_b_fc2 = nn.Linear(r, c1, bias=False)
 
     def forward(self, x: Tensor, H, W) -> Tensor:
-        return self.fc2(F.gelu(self.dwconv(self.fc1(x), H, W)))
+        # Original fc1 output
+        out_fc1 = self.fc1(x)
+        # LoRA adjustment to fc1
+        out_fc1_lora = self.lora_b_fc1(self.lora_a_fc1(x))
+        out_fc1 = out_fc1 + out_fc1_lora  # Combine original and LoRA
+
+        # Apply depth-wise convolution
+        out_dwconv = self.dwconv(out_fc1, H, W)
+
+        # Activation
+        out_act = F.gelu(out_dwconv)
+
+        # Original fc2 output
+        out_fc2 = self.fc2(out_act)
+        # LoRA adjustment to fc2
+        out_fc2_lora = self.lora_b_fc2(self.lora_a_fc2(out_act))
+        out_fc2 = out_fc2 + out_fc2_lora  # Combine original and LoRA
+
+        return out_fc2
+
 
 
 class PatchEmbed(nn.Module):
@@ -104,39 +233,16 @@ class PatchEmbedParallel(nn.Module):
         return x, H, W
 
 
-class PatchEmbedSingle(nn.Module):
-    def __init__(self, c1=3, c2=32, patch_size=7, stride=4, padding=0, rank=4):
-        super().__init__()
-        # LoRA模块：使用低秩分解替代一部分参数
-        self.lora_A = nn.Conv2d(c1, rank, kernel_size=1, stride=1, padding=0, bias=False)
-        self.lora_B = nn.Conv2d(rank, c2, kernel_size=patch_size, stride=stride, padding=padding, bias=False)
-        # 定义归一化层
-        self.norm = nn.LayerNorm(c2)  # 对通道维度进行归一化
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Lora路径
-        x = self.lora_A(x)
-        x = self.lora_B(x)
-        # 将通道维度移动到最后以便于 LayerNorm 操作
-        x = x.permute(0, 2, 3, 1)  # 从 (B, C, H, W) -> (B, H, W, C)
-        # 归一化操作
-        x = self.norm(x)
-        # 恢复原始维度顺序
-        x = x.permute(0, 3, 1, 2)  # 从 (B, H, W, C) -> (B, C, H, W)
-        return x
-
-
 class Block(nn.Module):
     def __init__(self, dim, head, sr_ratio=1, dpr=0., is_fan=False):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim)
-        self.attn = Attention(dim, head, sr_ratio)
+        self.attn = Attention(dim, head, sr_ratio, 4)
         self.drop_path = DropPath(dpr) if dpr > 0. else nn.Identity()
         self.norm2 = nn.LayerNorm(dim)
-        self.mlp = MLP(dim, int(dim * 4)) if not is_fan else ChannelProcessing(dim, mlp_hidden_dim=int(dim * 4))
+        self.mlp = MLP(dim, int(dim * 4), 4) if not is_fan else ChannelProcessing(dim, mlp_hidden_dim=int(dim * 4))
 
     def forward(self, x: Tensor, H, W) -> Tensor:
-        x = x + self.drop_path(self.attn(self.norm1(x), H, W))
         x = x + self.drop_path(self.mlp(self.norm2(x), H, W))
         return x
 
@@ -285,52 +391,43 @@ class CMNeXt(nn.Module):
         self.patch_embed3 = PatchEmbed(embed_dims[1], embed_dims[2], 3, 2, 3 // 2)
         self.patch_embed4 = PatchEmbed(embed_dims[2], embed_dims[3], 3, 2, 3 // 2)
 
-        self.lora_downsample_layer = nn.ModuleList([
-                PatchEmbedSingle(3, embed_dims[0], 7, 4, 7//2),
-                *[PatchEmbedSingle(embed_dims[i], embed_dims[i+1], 3, 2, 3//2) for i in range(3)]
-            ])
-        self.lora_norm = nn.ModuleList([nn.LayerNorm(embed_dims[i]) for i in range(4)])
-        self.lora_extra_norm = nn.ModuleList(
-            [nn.ModuleList([nn.LayerNorm(embed_dims[i]) for i in range(4)]) for j in range(3)]
-        )
-
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
 
         cur = 0
         self.block1 = nn.ModuleList([Block(embed_dims[0], 1, 8, dpr[cur + i]) for i in range(depths[0])])
+        self.depth_block1 = nn.ModuleList([Block(embed_dims[0], 1, 8, dpr[cur + i]) for i in range(depths[0])])
+        self.event_block1 = nn.ModuleList([Block(embed_dims[0], 1, 8, dpr[cur + i]) for i in range(depths[0])])
+        self.lidar_block1 = nn.ModuleList([Block(embed_dims[0], 1, 8, dpr[cur + i]) for i in range(depths[0])])
+        self.share_block1 = nn.ModuleList([Block(embed_dims[0], 1, 8, dpr[cur + i]) for i in range(depths[0])])
         self.norm1 = nn.LayerNorm(embed_dims[0])
-        if self.num_modals > 0:
-            self.shared_extra_block1 = nn.ModuleList(
-                [MSPABlock(embed_dims[0], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[0])])  # --- MSPABlock
-            self.shared_extra_norm1 = ConvLayerNorm(embed_dims[0])
+
 
         cur += depths[0]
         self.block2 = nn.ModuleList([Block(embed_dims[1], 2, 4, dpr[cur + i]) for i in range(depths[1])])
+        self.depth_block2 = nn.ModuleList([Block(embed_dims[1], 2, 4, dpr[cur + i]) for i in range(depths[1])])
+        self.event_block2 = nn.ModuleList([Block(embed_dims[1], 2, 4, dpr[cur + i]) for i in range(depths[1])])
+        self.lidar_block2 = nn.ModuleList([Block(embed_dims[1], 2, 4, dpr[cur + i]) for i in range(depths[1])])
+        self.share_block2 = nn.ModuleList([Block(embed_dims[1], 2, 4, dpr[cur + i]) for i in range(depths[1])])
         self.norm2 = nn.LayerNorm(embed_dims[1])
-        if self.num_modals > 0:
-            self.shared_extra_block2 = nn.ModuleList(
-                [MSPABlock(embed_dims[1], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[1])])
-            self.shared_extra_norm2 = ConvLayerNorm(embed_dims[1])
+
 
         cur += depths[1]
         self.block3 = nn.ModuleList([Block(embed_dims[2], 5, 2, dpr[cur + i]) for i in range(depths[2])])
+        self.depth_block3 = nn.ModuleList([Block(embed_dims[2], 5, 2, dpr[cur + i]) for i in range(depths[2])])
+        self.event_block3 = nn.ModuleList([Block(embed_dims[2], 5, 2, dpr[cur + i]) for i in range(depths[2])])
+        self.lidar_block3 = nn.ModuleList([Block(embed_dims[2], 5, 2, dpr[cur + i]) for i in range(depths[2])])
+        self.share_block3 = nn.ModuleList([Block(embed_dims[2], 5, 2, dpr[cur + i]) for i in range(depths[2])])
         self.norm3 = nn.LayerNorm(embed_dims[2])
-        if self.num_modals > 0:
-            self.shared_extra_block3 = nn.ModuleList(
-                [MSPABlock(embed_dims[2], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[2])])
-            self.shared_extra_norm3 = ConvLayerNorm(embed_dims[2])
+
 
         cur += depths[2]
         self.block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
+        self.depth_block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
+        self.event_block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
+        self.lidar_block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
+        self.share_block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
         self.norm4 = nn.LayerNorm(embed_dims[3])
-        if self.num_modals > 0:
-            self.shared_extra_block4 = nn.ModuleList(
-                [MSPABlock(embed_dims[3], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[3])])
-            self.shared_extra_norm4 = ConvLayerNorm(embed_dims[3])
+
 
         if self.num_modals > 0:
             num_heads = [1, 2, 5, 8]
@@ -346,13 +443,15 @@ class CMNeXt(nn.Module):
                 FFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=nn.BatchNorm2d)])
 
         # 冻结参数debug
-        # for layer in [self.shared_extra_block1, self.shared_extra_block2, self.shared_extra_block3, self.shared_extra_block4,
-        #               self.shared_extra_norm1, self.shared_extra_norm2, self.shared_extra_norm3, self.shared_extra_norm4,
-        #               self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
-        #               self.FRMs, self.FFMs,
-        #               self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
-        #     for param in layer.parameters():
-        #         param.requires_grad = False
+        for layer in [self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
+                      self.depth_block1, self.depth_block2, self.depth_block3, self.depth_block4,
+                      self.event_block1, self.event_block2, self.event_block3, self.event_block4,
+                      self.lidar_block1, self.lidar_block2, self.lidar_block3, self.lidar_block4,
+                      self.share_block1, self.share_block2, self.share_block3, self.share_block4,
+                      self.FRMs, self.FFMs,
+                      self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
+            for param in layer.parameters():
+                param.requires_grad = False
 
     def tokenselect(self, x_ext, module):
         x_scores = module(x_ext)
@@ -369,139 +468,175 @@ class CMNeXt(nn.Module):
         B = x_cam.shape[0]
         outs = []
 
-        # stage 1
-        x_cam_ori, H, W = self.patch_embed1(x_cam)
+        # ------ stage 1 ------ #
+        ## ------ rgb encoder lora process ------ ##
+        x_cam, H, W = self.patch_embed1(x_cam)
         for blk in self.block1:
-            x_cam_ori = blk(x_cam_ori, H, W)
-        x1_cam_ori = self.norm1(x_cam_ori).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-        x1_cam_lora = self.lora_downsample_layer[0](x_cam)
-        x1_cam = x1_cam_ori + x1_cam_lora
-        x1_cam = self.lora_norm[0](x1_cam.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+            x_cam = blk(x_cam, H, W)
+        x1_cam = self.norm1(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
         if self.num_modals > 0:
+            ## ------ MeMe ------ ##
             x_ext_moe, x_f, loss_moe1 = self.moe1(x_ext)
-            for blk in self.shared_extra_block1:
-                x_f = blk(x_f)
-            x1_f = self.shared_extra_norm1(x_f)
-            for i in range(self.num_modals):
-                x_ext_extra_ori, _, _ = self.patch_embed1(x_ext[i])
-                for blk in self.block1:
-                    x_ext_extra_ori = blk(x_ext_extra_ori, H, W)
-                x_ext_extra_ori = self.norm1(x_ext_extra_ori).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-                x_ext[i] = x_ext_extra_ori + x_ext_moe[i]
-                x_ext[i] = self.lora_extra_norm[i][0](x_ext[i].permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
+            ## ------ shared feature encoder lora process ------ ##
+            x_f = x_f.flatten(2).transpose(1, 2)
+            for blk in self.share_block1:
+                x_f = blk(x_f, H, W)
+            x1_f = self.norm1(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            ## ------ diff feature encoder lora process ------ ##
+            for i in range(self.num_modals):
+                x_ext[i], _, _ = self.patch_embed1(x_ext[i])
+                if i == 0:
+                    for blk in self.depth_block1:
+                        x_ext[i] = blk(x_ext[i], H, W)
+                elif i == 1:
+                    for blk in self.event_block1:
+                        x_ext[i] = blk(x_ext[i], H, W)
+                elif i == 2:
+                    for blk in self.lidar_block1:
+                        x_ext[i] = blk(x_ext[i], H, W)
+                x_ext[i] = self.norm1(x_ext[i] + x_ext_moe[i].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            ## ------ rgb & X_share fusion ------ ##
             x1_cam, x1_f = self.FRMs[0](x1_cam, x1_f)
             x_fused = self.FFMs[0](x1_cam, x1_f)
 
+            ## ------ rgb & X_diff fusion ------ ##
             x_ext_attn = self.attn_gate1(x_ext, x_fused)
             expert_combine_output = self.concat_conv1(x_ext_attn)
             final_fused = self.final_conv1(expert_combine_output, x_fused)
             outs.append(final_fused)
-            # outs.append(x_fused)
-            # x_ext = [x_.reshape(B, H, W, -1).permute(0, 3, 1, 2) + x1_f for x_ in x_ext] if self.num_modals > 1 else [x1_f]
         else:
             outs.append(x1_cam)
 
-        # stage 2
-        x1_cam_ori, H, W = self.patch_embed2(x1_cam)
+        # ------ stage 2 ------ #
+        ## ------ rgb encoder lora process ------ ##
+        x1_cam, H, W = self.patch_embed2(x1_cam)
         for blk in self.block2:
-            x1_cam_ori = blk(x1_cam_ori, H, W)
-        x2_cam_ori = self.norm2(x1_cam_ori).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-        x2_cam_lora = self.lora_downsample_layer[1](x1_cam)
-        x2_cam = x2_cam_ori + x2_cam_lora
-        x2_cam = self.lora_norm[1](x2_cam.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+            x1_cam = blk(x1_cam, H, W)
+        x2_cam = self.norm2(x1_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
         if self.num_modals > 0:
+            ## ------ MeMe ------ ##
             x_ext_moe, x_f, loss_moe2 = self.moe2(x_ext)
-            for blk in self.shared_extra_block2:
-                x_f = blk(x_f)
-            x2_f = self.shared_extra_norm2(x_f)
-            for i in range(self.num_modals):
-                x_ext_extra_ori, _, _ = self.patch_embed2(x_ext[i])
-                for blk in self.block2:
-                    x_ext_extra_ori = blk(x_ext_extra_ori, H, W)
-                x_ext_extra_ori = self.norm2(x_ext_extra_ori).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-                x_ext[i] = x_ext_extra_ori + x_ext_moe[i]
-                x_ext[i] = self.lora_extra_norm[i][1](x_ext[i].permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
-            # x2_f = self.shared_extra_norm2(x_f)
+            ## ------ shared feature encoder lora process ------ ##
+            x_f = x_f.flatten(2).transpose(1, 2)
+            for blk in self.share_block2:
+                x_f = blk(x_f, H, W)
+            x2_f = self.norm2(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            ## ------ diff feature encoder lora process ------ ##
+            for i in range(self.num_modals):
+                x_ext[i], _, _ = self.patch_embed2(x_ext[i])
+                if i == 0:
+                    for blk in self.depth_block2:
+                        x_ext[i] = blk(x_ext[i], H, W)
+                elif i == 1:
+                    for blk in self.event_block2:
+                        x_ext[i] = blk(x_ext[i], H, W)
+                elif i == 2:
+                    for blk in self.lidar_block2:
+                        x_ext[i] = blk(x_ext[i], H, W)
+                x_ext[i] = self.norm2(x_ext[i] + x_ext_moe[i].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            ## ------ rgb & X_share fusion ------ ##
             x2_cam, x2_f = self.FRMs[1](x2_cam, x2_f)
             x_fused = self.FFMs[1](x2_cam, x2_f)
 
+            ## ------ rgb & X_diff fusion ------ ##
             x_ext_attn = self.attn_gate2(x_ext, x_fused)
             expert_combine_output = self.concat_conv2(x_ext_attn)
             final_fused = self.final_conv2(expert_combine_output, x_fused)
             outs.append(final_fused)
-            # outs.append(x_fused)
-            # x_ext = [x_.reshape(B, H, W, -1).permute(0, 3, 1, 2) + x2_f for x_ in x_ext] if self.num_modals > 1 else [x2_f]
         else:
             outs.append(x2_cam)
 
-        # stage 3
-        x_cam_ori, H, W = self.patch_embed3(x2_cam)
+        # ------ stage 3 ------ #
+        ## ------ rgb encoder lora process ------ ##
+        x2_cam, H, W = self.patch_embed3(x2_cam)
         for blk in self.block3:
-            x_cam_ori = blk(x_cam_ori, H, W)
-        x3_cam_ori = self.norm3(x_cam_ori).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-        x3_cam_lora = self.lora_downsample_layer[2](x2_cam)
-        x3_cam = x3_cam_ori + x3_cam_lora
-        x3_cam = self.lora_norm[2](x3_cam.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+            x2_cam = blk(x2_cam, H, W)
+        x3_cam = self.norm3(x2_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
         if self.num_modals > 0:
+            ## ------ MeMe ------ ##
             x_ext_moe, x_f, loss_moe3 = self.moe3(x_ext)
-            for blk in self.shared_extra_block3:
-                x_f = blk(x_f)
-            x3_f = self.shared_extra_norm3(x_f)
-            for i in range(self.num_modals):
-                x_ext_extra_ori, _, _ = self.patch_embed3(x_ext[i])
-                for blk in self.block3:
-                    x_ext_extra_ori = blk(x_ext_extra_ori, H, W)
-                x_ext_extra_ori = self.norm3(x_ext_extra_ori).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-                x_ext[i] = x_ext_extra_ori + x_ext_moe[i]
-                x_ext[i] = self.lora_extra_norm[i][2](x_ext[i].permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
+            ## ------ shared feature encoder lora process ------ ##
+            x_f = x_f.flatten(2).transpose(1, 2)
+            for blk in self.share_block3:
+                x_f = blk(x_f, H, W)
+            x3_f = self.norm3(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            ## ------ diff feature encoder lora process ------ ##
+            for i in range(self.num_modals):
+                x_ext[i], _, _ = self.patch_embed3(x_ext[i])
+                if i == 0:
+                    for blk in self.depth_block3:
+                        x_ext[i] = blk(x_ext[i], H, W)
+                elif i == 1:
+                    for blk in self.event_block3:
+                        x_ext[i] = blk(x_ext[i], H, W)
+                elif i == 2:
+                    for blk in self.event_block3:
+                        x_ext[i] = blk(x_ext[i], H, W)
+                x_ext[i] = self.norm3(x_ext[i] + x_ext_moe[i].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            ## ------ rgb & X_share fusion ------ ##
             x3_cam, x3_f = self.FRMs[2](x3_cam, x3_f)
             x_fused = self.FFMs[2](x3_cam, x3_f)
 
+            ## ------ rgb & X_diff fusion ------ ##
             x_ext_attn = self.attn_gate3(x_ext, x_fused)
             expert_combine_output = self.concat_conv3(x_ext_attn)
             final_fused = self.final_conv3(expert_combine_output, x_fused)
             outs.append(final_fused)
-            # outs.append(x_fused)
-            # x_ext = [x_.reshape(B, H, W, -1).permute(0, 3, 1, 2) + x3_f for x_ in x_ext] if self.num_modals > 1 else [x3_f]
         else:
             outs.append(x3_cam)
 
-        # stage 4
-        x_cam_ori, H, W = self.patch_embed4(x3_cam)
+        # ------ stage 4 ------ #
+        ## ------ rgb encoder lora process ------ ##
+        x3_cam, H, W = self.patch_embed4(x3_cam)
         for blk in self.block4:
-            x_cam_ori = blk(x_cam_ori, H, W)
-        x4_cam_ori = self.norm4(x_cam_ori).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-        x4_cam_lora = self.lora_downsample_layer[3](x3_cam)
-        x4_cam = x4_cam_ori + x4_cam_lora
-        x4_cam = self.lora_norm[3](x4_cam.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+            x3_cam = blk(x3_cam, H, W)
+        x4_cam = self.norm4(x3_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
         if self.num_modals > 0:
+            ## ------ MeMe ------ ##
             x_ext_moe, x_f, loss_moe4 = self.moe4(x_ext)
-            for blk in self.shared_extra_block4:
-                x_f = blk(x_f)
-            x4_f = self.shared_extra_norm4(x_f)
-            for i in range(self.num_modals):
-                x_ext_extra_ori, _, _ = self.patch_embed4(x_ext[i])
-                for blk in self.block4:
-                    x_ext_extra_ori = blk(x_ext_extra_ori, H, W)
-                x_ext_extra_ori = self.norm4(x_ext_extra_ori).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-                x_ext[i] = x_ext_extra_ori + x_ext_moe[i]
-                x_ext[i] = self.lora_extra_norm[i][3](x_ext[i].permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
+            ## ------ shared feature encoder lora process ------ ##
+            x_f = x_f.flatten(2).transpose(1, 2)
+            for blk in self.share_block4:
+                x_f = blk(x_f, H, W)
+            x4_f = self.norm4(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            ## ------ diff feature encoder lora process ------ ##
+            for i in range(self.num_modals):
+                x_ext[i], _, _ = self.patch_embed4(x_ext[i])
+                if i == 0:
+                    for blk in self.depth_block4:
+                        x_ext[i] = blk(x_ext[i], H, W)
+                elif i == 1:
+                    for blk in self.event_block4:
+                        x_ext[i] = blk(x_ext[i], H, W)
+                elif i == 2:
+                    for blk in self.lidar_block4:
+                        x_ext[i] = blk(x_ext[i], H, W)
+                x_ext[i] = self.norm4(x_ext[i] + x_ext_moe[i].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            ## ------ rgb & X_share fusion ------ ##
             x4_cam, x4_f = self.FRMs[3](x4_cam, x4_f)
             x_fused = self.FFMs[3](x4_cam, x4_f)
 
+            ## ------ rgb & X_diff fusion ------ ##
             x_ext_attn = self.attn_gate4(x_ext, x_fused)
             expert_combine_output = self.concat_conv4(x_ext_attn)
             final_fused = self.final_conv4(expert_combine_output, x_fused)
             outs.append(final_fused)
-            # outs.append(x_fused)
         else:
             outs.append(x4_cam)
 

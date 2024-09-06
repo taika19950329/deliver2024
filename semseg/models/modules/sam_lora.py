@@ -284,34 +284,34 @@ class LoRA_Sam_submodel(nn.Module):
 
 
 if __name__ == "__main__":
-    # sam = sam_model_registry["vit_b"](checkpoint="/home/yi/Documents/DELIVER/checkpoints/pretrained/sam/sam_vit_b_01ec64.pth")
-    # lora_sam = LoRA_Sam(sam, 4)
-    # print(lora_sam.sam.image_encoder)
-    # output = lora_sam.sam.image_encoder(torch.rand(size=(2, 3, 1024, 1024)))
-    # print(output.size())
+    sam = sam_model_registry["vit_b"](checkpoint="/home/yi/Documents/DELIVER/checkpoints/pretrained/sam/sam_vit_b_01ec64.pth")
+    lora_sam = LoRA_Sam(sam, 4)
+    print(lora_sam.sam.image_encoder)
+    output = lora_sam.sam.image_encoder(torch.rand(size=(2, 3, 1024, 1024)))
+    print(output.size())
     # raise  Exception
-    sam = sam_model_registry["vit_b"](
-        checkpoint="/home/yi/Documents/DELIVER/checkpoints/pretrained/sam/sam_vit_b_01ec64.pth")
-
-    # 定义第一个子模型，处理patch_embed层和第0到3层的blocks
-    lora_sam_1 = LoRA_Sam_submodel(sam, r=4, block_range=(0, 3))
-
-    # 定义第二个子模型，仅处理第4到7层的blocks
-    lora_sam_2 = LoRA_Sam_submodel(sam, r=4, block_range=(3, 6))
-    lora_sam_3 = LoRA_Sam_submodel(sam, r=4, block_range=(6, 9))
-    lora_sam_4 = LoRA_Sam_submodel(sam, r=4, block_range=(9, 12))
-
-    # 处理输入数据
-    input_tensor = torch.rand(size=(2, 3, 1024, 1024))
-    output_1 = lora_sam_1(input_tensor)
-    output_2 = lora_sam_2(output_1.permute(0, 2, 3, 1))
-    output_3 = lora_sam_3(output_2.permute(0, 2, 3, 1))
-    output_4 = lora_sam_4(output_3.permute(0, 2, 3, 1))
-
-    print(output_1.size())
-    print(output_2.size())
-    print(output_3.size())
-    print(output_4.size())
+    # sam = sam_model_registry["vit_b"](
+    #     checkpoint="/home/yi/Documents/DELIVER/checkpoints/pretrained/sam/sam_vit_b_01ec64.pth")
+    #
+    # # 定义第一个子模型，处理patch_embed层和第0到3层的blocks
+    # lora_sam_1 = LoRA_Sam_submodel(sam, r=4, block_range=(0, 3))
+    #
+    # # 定义第二个子模型，仅处理第4到7层的blocks
+    # lora_sam_2 = LoRA_Sam_submodel(sam, r=4, block_range=(3, 6))
+    # lora_sam_3 = LoRA_Sam_submodel(sam, r=4, block_range=(6, 9))
+    # lora_sam_4 = LoRA_Sam_submodel(sam, r=4, block_range=(9, 12))
+    #
+    # # 处理输入数据
+    # input_tensor = torch.rand(size=(2, 3, 1024, 1024))
+    # output_1 = lora_sam_1(input_tensor)
+    # output_2 = lora_sam_2(output_1.permute(0, 2, 3, 1))
+    # output_3 = lora_sam_3(output_2.permute(0, 2, 3, 1))
+    # output_4 = lora_sam_4(output_3.permute(0, 2, 3, 1))
+    #
+    # print(output_1.size())
+    # print(output_2.size())
+    # print(output_3.size())
+    # print(output_4.size())
 
 '''
 # 以下是训练好模型之后的保存和加载模型权重进行推理的操作
