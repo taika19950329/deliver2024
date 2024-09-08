@@ -380,10 +380,10 @@ class CMNeXt(nn.Module):
         self.concat_conv3 = ConcatAndConv(3 * embed_dims[2], embed_dims[2])
         self.concat_conv4 = ConcatAndConv(3 * embed_dims[3], embed_dims[3])
 
-        self.final_conv1 = FinalConvProcessor(embed_dims[0], embed_dims[0])
-        self.final_conv2 = FinalConvProcessor(embed_dims[1], embed_dims[1])
-        self.final_conv3 = FinalConvProcessor(embed_dims[2], embed_dims[2])
-        self.final_conv4 = FinalConvProcessor(embed_dims[3], embed_dims[3])
+        # self.final_conv1 = FinalConvProcessor(embed_dims[0], embed_dims[0])
+        # self.final_conv2 = FinalConvProcessor(embed_dims[1], embed_dims[1])
+        # self.final_conv3 = FinalConvProcessor(embed_dims[2], embed_dims[2])
+        # self.final_conv4 = FinalConvProcessor(embed_dims[3], embed_dims[3])
 
         # patch_embed
         self.patch_embed1 = PatchEmbed(3, embed_dims[0], 7, 4, 7 // 2)
@@ -505,8 +505,9 @@ class CMNeXt(nn.Module):
 
             ## ------ rgb & X_diff fusion ------ ##
             x_ext_attn = self.attn_gate1(x_ext, x_fused)
-            expert_combine_output = self.concat_conv1(x_ext_attn)
-            final_fused = self.final_conv1(expert_combine_output, x_fused)
+            # expert_combine_output = self.concat_conv1(x_ext_attn)
+            # final_fused = self.final_conv1(expert_combine_output, x_fused)
+            final_fused = self.concat_conv1(x_ext_attn)
             outs.append(final_fused)
         else:
             outs.append(x1_cam)
@@ -548,8 +549,8 @@ class CMNeXt(nn.Module):
 
             ## ------ rgb & X_diff fusion ------ ##
             x_ext_attn = self.attn_gate2(x_ext, x_fused)
-            expert_combine_output = self.concat_conv2(x_ext_attn)
-            final_fused = self.final_conv2(expert_combine_output, x_fused)
+            # expert_combine_output = self.concat_conv2(x_ext_attn)
+            final_fused = self.concat_conv2(x_ext_attn)
             outs.append(final_fused)
         else:
             outs.append(x2_cam)
@@ -591,8 +592,8 @@ class CMNeXt(nn.Module):
 
             ## ------ rgb & X_diff fusion ------ ##
             x_ext_attn = self.attn_gate3(x_ext, x_fused)
-            expert_combine_output = self.concat_conv3(x_ext_attn)
-            final_fused = self.final_conv3(expert_combine_output, x_fused)
+            # expert_combine_output = self.concat_conv3(x_ext_attn)
+            final_fused = self.concat_conv3(x_ext_attn)
             outs.append(final_fused)
         else:
             outs.append(x3_cam)
@@ -634,8 +635,8 @@ class CMNeXt(nn.Module):
 
             ## ------ rgb & X_diff fusion ------ ##
             x_ext_attn = self.attn_gate4(x_ext, x_fused)
-            expert_combine_output = self.concat_conv4(x_ext_attn)
-            final_fused = self.final_conv4(expert_combine_output, x_fused)
+            # expert_combine_output = self.concat_conv4(x_ext_attn)
+            final_fused = self.concat_conv4(x_ext_attn)
             outs.append(final_fused)
         else:
             outs.append(x4_cam)
