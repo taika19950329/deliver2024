@@ -779,15 +779,19 @@ class MoE_lora_new(nn.Module):
         # Compute uniformity loss (mean squared error between shared and individual features)
         uniformity_loss = 0
         for diff_output in final_diff_outputs:
-            uniformity_loss += F.mse_loss(shared_mean_tensor, diff_output)
+            p = F.log_softmax(shared_mean_tensor.view(shared_mean_tensor.size(0), -1), dim=-1)
+            q = F.softmax(diff_output.view(diff_output.size(0), -1), dim=-1)
+            uniformity_loss += self.compute_symmetric_kl_loss(p, q)
 
         # Compute distinctiveness loss (KL divergence between individual features)
         distinctiveness_loss = 0
+        epsilon = 1e-6
         for i in range(len(final_diff_outputs)):
             for j in range(i + 1, len(final_diff_outputs)):
                 p = F.log_softmax(final_diff_outputs[i].view(final_diff_outputs[i].size(0), -1), dim=-1)
                 q = F.softmax(final_diff_outputs[j].view(final_diff_outputs[j].size(0), -1), dim=-1)
-                distinctiveness_loss += self.compute_symmetric_kl_loss(p, q)
+                kl_loss = self.compute_symmetric_kl_loss(p, q)
+                distinctiveness_loss += 1 / (kl_loss + epsilon)
 
         # Ensure total_loss is non-negative and balanced
         total_loss += uniformity_loss + 0.1 * distinctiveness_loss + total_expert_loss
