@@ -57,10 +57,10 @@ def load_dualpath_model(model, model_file):
             state_dict[k] = v
         elif k.find('block') >= 0:
             state_dict[k] = v
-            state_dict[k.replace('block', 'depth_block')] = v
-            state_dict[k.replace('block', 'event_block')] = v
-            state_dict[k.replace('block', 'lidar_block')] = v
-            state_dict[k.replace('block', 'share_block')] = v
+            # state_dict[k.replace('block', 'depth_block')] = v
+            # state_dict[k.replace('block', 'event_block')] = v
+            # state_dict[k.replace('block', 'lidar_block')] = v
+            # state_dict[k.replace('block', 'share_block')] = v
             # state_dict[k.replace('block', 'diff3_extra_block')] = v
         elif k.find('norm') >= 0:
             state_dict[k] = v
@@ -118,10 +118,11 @@ def load_dualpath_model(model, model_file):
 
 if __name__ == '__main__':
     modals = ['img', 'depth', 'event', 'lidar']
-    x = [torch.zeros(2, 3, 512, 512), torch.ones(2, 3, 512, 512), torch.ones(2, 3, 512, 512) * 2,
-         torch.ones(2, 3, 512, 512) * 3]
-    model = CMNeXt(int(x[0].shape[2] / 4), 'CMNeXt-B2', 25, modals)
-    model.init_pretrained('/home/yi/Documents/DELIVER/checkpoints/pretrained/segformer/mit_b2.pth')
-    y, moe_loss = model(x)
+    device = torch.device('cpu')
+    x = [torch.zeros(2, 3, 1024, 1024).to(device), torch.ones(2, 3, 1024, 1024).to(device), (torch.ones(2, 3, 1024, 1024) * 2).to(device),
+         (torch.ones(2, 3, 1024, 1024) * 3).to(device)]
+    model = CMNeXt(int(x[0].shape[2] / 4), 'CMNeXt-B1', 25, modals).to(device)
+    model.init_pretrained('/home/yi/Documents/DELIVER/checkpoints/pretrained/segformer/mit_b1.pth')
+    y, moe_loss1, _, _, _ = model(x)
     print(y.shape)
-    print(moe_loss)
+    print(moe_loss1)

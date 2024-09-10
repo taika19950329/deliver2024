@@ -3,8 +3,8 @@ SAVE_DIR        : 'output'          # output folder name used for saving the mod
 
 MODEL:
   NAME          : CMNeXt                                            # name of the model you are using
-  BACKBONE      : CMNeXt-B2                                         # model variant
-  PRETRAINED    : 'checkpoints/pretrained/segformer/mit_b2.pth'     # backbone model's weight 
+  BACKBONE      : CMNeXt-B1                                         # model variant
+  PRETRAINED    : 'checkpoints/pretrained/segformer/mit_b1.pth'     # backbone model's weight
   RESUME        : ''                                                # checkpoint file 
 
 DATASET:
@@ -25,7 +25,7 @@ TRAIN:
   EPOCHS        : 200             # number of epochs to train
   EVAL_START    : 100             # evaluation interval start
   EVAL_INTERVAL : 1               # evaluation interval during training
-  AMP           : false           # use AMP in training
+  AMP           : true           # use AMP in training
   DDP           : true            # use DDP training
 
 LOSS:

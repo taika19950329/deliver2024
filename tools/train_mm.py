@@ -204,7 +204,7 @@ if __name__ == '__main__':
     gpu = setup_ddp()
     modals = ''.join([m[0] for m in cfg['DATASET']['MODALS']])
     model = cfg['MODEL']['BACKBONE']
-    exp_name = '_'.join([cfg['DATASET']['NAME'], model, modals, 'MoE', '20240623'])
+    exp_name = '_'.join([cfg['DATASET']['NAME'], model, modals, 'MoE', '20240909'])
     save_dir = Path(cfg['SAVE_DIR'], exp_name)
     if os.path.isfile(cfg['MODEL']['RESUME']):
         save_dir =  Path(os.path.dirname(cfg['MODEL']['RESUME']))

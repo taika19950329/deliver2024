@@ -17,8 +17,20 @@ from semseg.models.modules.moe_lora import MoE_lora_new, AttentionWeightedSum, C
 # from semseg.models.modules.sam_lora import *
 # from semseg.models.modules.BasicBlock import TF_3D
 
-import numpy as np
-from copy import deepcopy
+# import numpy as np
+# from copy import deepcopy
+#
+import torch
+import psutil
+import os
+
+# 获取当前进程的 PID
+pid = os.getpid()
+# 获取当前进程的内存信息
+process = psutil.Process(pid)
+#
+# import torch.optim as optim
+# from torch.cuda.amp import autocast, GradScaler
 
 
 # class Attention(nn.Module):
@@ -478,8 +490,9 @@ class LayerNormParallel(nn.Module):
 
 cmnext_settings = {
     # 'B0': [[32, 64, 160, 256], [2, 2, 2, 2]],
-    # 'B1': [[64, 128, 320, 512], [2, 2, 2, 2]],
-    'B2': [[64, 128, 320, 512], [3, 4, 6, 3]],
+    'B1': [[64, 128, 320, 512], [2, 2, 2, 2]],
+    # 'B2': [[64, 128, 320, 512], [3, 4, 6, 3]],
+    # 'B2': [[64, 128, 320, 512], [2, 2, 2, 2]],
     # 'B3': [[64, 128, 320, 512], [3, 4, 18, 3]],
     'B4': [[64, 128, 320, 512], [3, 8, 27, 3]],
     'B5': [[64, 128, 320, 512], [3, 6, 40, 3]]
@@ -563,11 +576,13 @@ class CMNeXt(nn.Module):
                 FFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=nn.BatchNorm2d)])
 
         # 冻结参数debug
-        for layer in [self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
-                      self.FRMs, self.FFMs,
-                      self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
-            for param in layer.parameters():
-                param.requires_grad = False
+        # for layer in [self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
+        #               self.FRMs, self.FFMs,
+        #               self.moe1, self.moe2, self.moe3, self.moe4,
+        #               self.concat_conv1, self.concat_conv2, self.concat_conv3, self.concat_conv4,
+        #               self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
+        #     for param in layer.parameters():
+        #         param.requires_grad = False
 
     def tokenselect(self, x_ext, module):
         x_scores = module(x_ext)
@@ -586,10 +601,14 @@ class CMNeXt(nn.Module):
 
         # ------ stage 1 ------ #
         ## ------ rgb encoder lora process ------ ##
+        print_memory_usage("Before stage1")
         x_cam, H, W = self.patch_embed1(x_cam)
         for blk in self.block1:
             x_cam = blk(x_cam, H, W, 'rgb')
         x1_cam = self.norm1(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+        del x_cam
+        torch.cuda.empty_cache()
 
         if self.num_modals > 0:
             ## ------ MeMe ------ ##
@@ -600,6 +619,9 @@ class CMNeXt(nn.Module):
             for blk in self.block1:
                 x_f = blk(x_f, H, W, 'share')
             x1_f = self.norm1(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            del x_f
+            torch.cuda.empty_cache()
 
             ## ------ diff feature encoder lora process ------ ##
             for i in range(self.num_modals):
@@ -615,6 +637,9 @@ class CMNeXt(nn.Module):
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm1(x_ext[i] + x_ext_moe[i].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
+            del x_ext_moe
+            torch.cuda.empty_cache()
+
             ## ------ rgb & X_share fusion ------ ##
             x1_cam, x1_f = self.FRMs[0](x1_cam, x1_f)
             x_fused = self.FFMs[0](x1_cam, x1_f)
@@ -625,15 +650,22 @@ class CMNeXt(nn.Module):
             # final_fused = self.final_conv1(expert_combine_output, x_fused)
             final_fused = self.concat_conv1(x_ext_attn)
             outs.append(final_fused)
+
+            del final_fused, x_ext_attn
+            torch.cuda.empty_cache()
         else:
             outs.append(x1_cam)
 
         # ------ stage 2 ------ #
         ## ------ rgb encoder lora process ------ ##
+        print_memory_usage("Before stage2")
         x1_cam, H, W = self.patch_embed2(x1_cam)
         for blk in self.block2:
             x1_cam = blk(x1_cam, H, W, 'rgb')
         x2_cam = self.norm2(x1_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+        del x1_cam
+        torch.cuda.empty_cache()
 
         if self.num_modals > 0:
             ## ------ MeMe ------ ##
@@ -644,6 +676,9 @@ class CMNeXt(nn.Module):
             for blk in self.block2:
                 x_f = blk(x_f, H, W, 'share')
             x2_f = self.norm2(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            del x_f
+            torch.cuda.empty_cache()
 
             ## ------ diff feature encoder lora process ------ ##
             for i in range(self.num_modals):
@@ -659,6 +694,9 @@ class CMNeXt(nn.Module):
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm2(x_ext[i] + x_ext_moe[i].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
+            del x_ext_moe
+            torch.cuda.empty_cache()
+
             ## ------ rgb & X_share fusion ------ ##
             x2_cam, x2_f = self.FRMs[1](x2_cam, x2_f)
             x_fused = self.FFMs[1](x2_cam, x2_f)
@@ -668,15 +706,22 @@ class CMNeXt(nn.Module):
             # expert_combine_output = self.concat_conv2(x_ext_attn)
             final_fused = self.concat_conv2(x_ext_attn)
             outs.append(final_fused)
+
+            del final_fused, x_ext_attn
+            torch.cuda.empty_cache()
         else:
             outs.append(x2_cam)
 
         # ------ stage 3 ------ #
         ## ------ rgb encoder lora process ------ ##
+        print_memory_usage("Before stage3")
         x2_cam, H, W = self.patch_embed3(x2_cam)
         for blk in self.block3:
             x2_cam = blk(x2_cam, H, W, 'rgb')
         x3_cam = self.norm3(x2_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+        del x2_cam
+        torch.cuda.empty_cache()
 
         if self.num_modals > 0:
             ## ------ MeMe ------ ##
@@ -687,6 +732,9 @@ class CMNeXt(nn.Module):
             for blk in self.block3:
                 x_f = blk(x_f, H, W, 'share')
             x3_f = self.norm3(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            del x_f
+            torch.cuda.empty_cache()
 
             ## ------ diff feature encoder lora process ------ ##
             for i in range(self.num_modals):
@@ -702,6 +750,9 @@ class CMNeXt(nn.Module):
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm3(x_ext[i] + x_ext_moe[i].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
+            del x_ext_moe
+            torch.cuda.empty_cache()
+
             ## ------ rgb & X_share fusion ------ ##
             x3_cam, x3_f = self.FRMs[2](x3_cam, x3_f)
             x_fused = self.FFMs[2](x3_cam, x3_f)
@@ -711,15 +762,22 @@ class CMNeXt(nn.Module):
             # expert_combine_output = self.concat_conv3(x_ext_attn)
             final_fused = self.concat_conv3(x_ext_attn)
             outs.append(final_fused)
+
+            del final_fused, x_ext_attn
+            torch.cuda.empty_cache()
         else:
             outs.append(x3_cam)
 
         # ------ stage 4 ------ #
         ## ------ rgb encoder lora process ------ ##
+        print_memory_usage("Before stage4")
         x3_cam, H, W = self.patch_embed4(x3_cam)
         for blk in self.block4:
             x3_cam = blk(x3_cam, H, W, 'rgb')
         x4_cam = self.norm4(x3_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+        del x3_cam
+        torch.cuda.empty_cache()
 
         if self.num_modals > 0:
             ## ------ MeMe ------ ##
@@ -730,6 +788,9 @@ class CMNeXt(nn.Module):
             for blk in self.block4:
                 x_f = blk(x_f, H, W, 'share')
             x4_f = self.norm4(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            del x_f
+            torch.cuda.empty_cache()
 
             ## ------ diff feature encoder lora process ------ ##
             for i in range(self.num_modals):
@@ -745,6 +806,9 @@ class CMNeXt(nn.Module):
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm4(x_ext[i] + x_ext_moe[i].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
+            del x_ext_moe
+            torch.cuda.empty_cache()
+
             ## ------ rgb & X_share fusion ------ ##
             x4_cam, x4_f = self.FRMs[3](x4_cam, x4_f)
             x_fused = self.FFMs[3](x4_cam, x4_f)
@@ -754,6 +818,9 @@ class CMNeXt(nn.Module):
             # expert_combine_output = self.concat_conv4(x_ext_attn)
             final_fused = self.concat_conv4(x_ext_attn)
             outs.append(final_fused)
+
+            del final_fused, x_ext_attn
+            torch.cuda.empty_cache()
         else:
             outs.append(x4_cam)
 
@@ -761,28 +828,73 @@ class CMNeXt(nn.Module):
         # return outs
 
 
+def print_memory_usage(step=""):
+    # GPU 显存使用情况
+    if torch.cuda.is_available():
+        print(f"[{step}] GPU Memory Allocated: {torch.cuda.memory_allocated() / 1024 ** 2:.2f} MB")
+        print(f"[{step}] GPU Memory Reserved: {torch.cuda.memory_reserved() / 1024 ** 2:.2f} MB")
+
+    # CPU 内存使用情况
+    mem_info = process.memory_info()
+    print(f"[{step}] CPU Memory Used: {mem_info.rss / 1024 ** 2:.2f} MB")
+
+
+# if __name__ == '__main__':
+#     modals = ['rgb', 'depth', 'event', 'lidar']
+#     device = torch.device('cuda')
+#     x = [torch.ones(2, 3, 1024, 1024).to(device), torch.ones(2, 3, 1024, 1024).to(device), (torch.ones(2, 3, 1024, 1024) * 2).to(device),
+#          (torch.ones(2, 3, 1024, 1024) * 3).to(device)]
+#     # print(int(x[0].shape[2]/4))
+#     # raise Exception
+#     model = CMNeXt(int(x[0].shape[2] / 4), 'B2', modals).to(device)
+#
+#     # total = 0
+#     # for name, param in model.named_parameters():
+#     #     if param.requires_grad:
+#     #         layer_params_m = param.numel() / 1e6
+#     #         total += layer_params_m
+#     #         print(f"层 {name} 参数量: {param.numel()} ({layer_params_m:.6f} M)")
+#     # print(f" ({total:.6f} M)")
+#     #
+#     # raise Exception
+#
+#     outs = model(x)
+#     for y in outs[0]:
+#         print(y.shape)
+#     print(outs[1:])
+
 if __name__ == '__main__':
     modals = ['rgb', 'depth', 'event', 'lidar']
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    x = [torch.ones(2, 3, 1024, 1024), torch.ones(2, 3, 1024, 1024), (torch.ones(2, 3, 1024, 1024) * 2),
-         (torch.ones(2, 3, 1024, 1024) * 3)]
-    # print(int(x[0].shape[2]/4))
-    # raise Exception
-    model = CMNeXt(int(x[0].shape[2] / 4), 'B2', modals)
+    device = torch.device('cuda')  # 使用 GPU
+    x = [torch.ones(2, 3, 1024, 1024).to(device),
+         torch.ones(2, 3, 1024, 1024).to(device),
+         (torch.ones(2, 3, 1024, 1024) * 2).to(device),
+         (torch.ones(2, 3, 1024, 1024) * 3).to(device)]
 
-    # total = 0
-    # for name, param in model.named_parameters():
-    #     if "fusion3" in name:
-    #         if param.requires_grad:
-    #             layer_params_m = param.numel() / 1e6
-    #             total += layer_params_m
-    #             print(f"层 {name} 参数量: {param.numel()} ({layer_params_m:.6f} M)")
-    # print(f" ({total:.6f} M)")
-    #
-    # raise Exception
+    model = CMNeXt(int(x[0].shape[2] / 4), 'B2', modals).to(device)
 
-    outs = model(x)
-    for y in outs[0]:
-        print(y.shape)
-    print(outs[1:])
+    # 初始化 GradScaler
+    scaler = GradScaler()
+
+    # optimizer = optim.Adam(model.parameters(), lr=1e-3)
+
+    # 训练循环
+    for epoch in range(1):  # 只做一个 epoch 作为示例
+        # optimizer.zero_grad()
+
+        # 使用混合精度训练
+        with autocast():
+            outs = model(x)
+            # 假设使用一个简单的损失函数
+        #     loss = sum(outs[1:])
+        #
+        # # 使用 GradScaler 缩放损失并进行反向传播
+        # scaler.scale(loss).backward()
+        # scaler.step(optimizer)
+        # scaler.update()
+
+        # 打印输出的形状
+        for y in outs[0]:
+            print(y.shape)
+        print(outs[1:])
 
