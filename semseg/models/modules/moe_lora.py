@@ -1325,6 +1325,46 @@ class AllInOne_lora(nn.Module):
         return final_ext_output, final_output, total_loss
 
 
+class ExpertsContrastiveLoss(torch.nn.Module):
+    def __init__(self, temperature=0.07):
+        super(ExpertsContrastiveLoss, self).__init__()
+        self.temperature = temperature
+
+    def forward(self, expert_outputs):
+        """
+        Args:
+            expert_outputs: list of expert outputs (E(x) = [E1(x), E2(x), ..., En(x)])
+                            Each expert_output has shape (num_tokens, hidden_dim)
+        Returns:
+            loss: The Experts Contrastive Loss
+        """
+        # Concatenate all expert outputs into one tensor
+        all_expert_outputs = torch.cat(expert_outputs, dim=0)  # Shape: (total_tokens, hidden_dim)
+
+        # Normalize the expert outputs
+        all_expert_outputs = F.normalize(all_expert_outputs, p=2, dim=1)  # Shape: (total_tokens, hidden_dim)
+
+        # Calculate pairwise cosine similarities
+        similarity_matrix = torch.matmul(all_expert_outputs,
+                                         all_expert_outputs.T)  # Shape: (total_tokens, total_tokens)
+
+        # Divide by temperature
+        similarity_matrix /= self.temperature
+
+        # Create labels for contrastive learning (positive pairs within the same expert)
+        labels = []
+        start_idx = 0
+        for expert_output in expert_outputs:
+            num_tokens = expert_output.size(0)
+            labels.append(torch.arange(start_idx, start_idx + num_tokens))
+            start_idx += num_tokens
+        labels = torch.cat(labels).to(similarity_matrix.device)
+
+        # Apply contrastive loss
+        contrastive_loss = F.cross_entropy(similarity_matrix, labels)
+
+        return contrastive_loss
+
 
 if "__main__"==__name__:
     # moe_instance = AllInOne_lora(3, 32, 7, 4, 4, 7//2, 6, 1024, True, 2)
@@ -1344,6 +1384,22 @@ if "__main__"==__name__:
     # tensor_1 = [torch.ones(2, 320, 64, 64), torch.ones(2, 320, 64, 64) * 2, torch.ones(2, 320, 64, 64) * 3]
     final_diff_outputs, shared_mean_tensor, total_loss = moe_instance(tensor_1)
     print(len(final_diff_outputs), shared_mean_tensor.shape, total_loss)
+
+    # Example usage
+    # temperature = 0.07
+    # loss_fn = ExpertsContrastiveLoss(temperature=temperature)
+    #
+    # # Simulate some expert outputs (E1(x), E2(x), ..., En(x)), each of size (num_tokens, hidden_dim)
+    # expert_1_output = torch.randn(10, 128)  # E1(x)
+    # expert_2_output = torch.randn(15, 128)  # E2(x)
+    # expert_3_output = torch.randn(8, 128)  # E3(x)
+    #
+    # # Combine expert outputs into a list
+    # expert_outputs = [expert_1_output, expert_2_output, expert_3_output]
+    #
+    # # Calculate Experts Contrastive Loss
+    # loss = loss_fn(expert_outputs)
+    # print("Experts Contrastive Loss:", loss.item())
 
 
 
