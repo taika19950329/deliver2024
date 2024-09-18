@@ -30,7 +30,7 @@ pid = os.getpid()
 process = psutil.Process(pid)
 #
 # import torch.optim as optim
-# from torch.cuda.amp import autocast, GradScaler
+from torch.cuda.amp import autocast, GradScaler
 
 
 # class Attention(nn.Module):
@@ -130,80 +130,23 @@ class Attention(nn.Module):
             self.lora_rgb_b_v
         )
 
-        # LoRA for depth
-        self.lora_depth_a_q = nn.Linear(dim, r, bias=False)
-        self.lora_depth_b_q = nn.Linear(r, dim, bias=False)
-        self.lora_depth_a_v = nn.Linear(dim, r, bias=False)
-        self.lora_depth_b_v = nn.Linear(r, dim, bias=False)
+        # LoRA for X
+        self.lora_X_a_q = nn.Linear(dim, r, bias=False)
+        self.lora_X_b_q = nn.Linear(r, dim, bias=False)
+        self.lora_X_a_v = nn.Linear(dim, r, bias=False)
+        self.lora_X_b_v = nn.Linear(r, dim, bias=False)
 
-        self.lora_depth_q = _LoRA_q(
+        self.lora_X_q = _LoRA_q(
             self.q,
-            self.lora_depth_a_q,
-            self.lora_depth_b_q
+            self.lora_X_a_q,
+            self.lora_X_b_q
         )
-        self.lora_depth_kv = _LoRA_kv(
+        self.lora_X_kv = _LoRA_kv(
             self.kv,
-            self.lora_depth_a_v,
-            self.lora_depth_b_v,
-            self.lora_depth_a_v,  # Reusing the same for k and v
-            self.lora_depth_b_v
-        )
-
-        # LoRA for event
-        self.lora_event_a_q = nn.Linear(dim, r, bias=False)
-        self.lora_event_b_q = nn.Linear(r, dim, bias=False)
-        self.lora_event_a_v = nn.Linear(dim, r, bias=False)
-        self.lora_event_b_v = nn.Linear(r, dim, bias=False)
-
-        self.lora_event_q = _LoRA_q(
-            self.q,
-            self.lora_event_a_q,
-            self.lora_event_b_q
-        )
-        self.lora_event_kv = _LoRA_kv(
-            self.kv,
-            self.lora_event_a_v,
-            self.lora_event_b_v,
-            self.lora_event_a_v,  # Reusing the same for k and v
-            self.lora_event_b_v
-        )
-
-        # LoRA for lidar
-        self.lora_lidar_a_q = nn.Linear(dim, r, bias=False)
-        self.lora_lidar_b_q = nn.Linear(r, dim, bias=False)
-        self.lora_lidar_a_v = nn.Linear(dim, r, bias=False)
-        self.lora_lidar_b_v = nn.Linear(r, dim, bias=False)
-
-        self.lora_lidar_q = _LoRA_q(
-            self.q,
-            self.lora_lidar_a_q,
-            self.lora_lidar_b_q
-        )
-        self.lora_lidar_kv = _LoRA_kv(
-            self.kv,
-            self.lora_lidar_a_v,
-            self.lora_lidar_b_v,
-            self.lora_lidar_a_v,  # Reusing the same for k and v
-            self.lora_lidar_b_v
-        )
-
-        # LoRA for share
-        self.lora_share_a_q = nn.Linear(dim, r, bias=False)
-        self.lora_share_b_q = nn.Linear(r, dim, bias=False)
-        self.lora_share_a_v = nn.Linear(dim, r, bias=False)
-        self.lora_share_b_v = nn.Linear(r, dim, bias=False)
-
-        self.lora_share_q = _LoRA_q(
-            self.q,
-            self.lora_share_a_q,
-            self.lora_share_b_q
-        )
-        self.lora_share_kv = _LoRA_kv(
-            self.kv,
-            self.lora_share_a_v,
-            self.lora_share_b_v,
-            self.lora_share_a_v,  # Reusing the same for k and v
-            self.lora_share_b_v
+            self.lora_X_a_v,
+            self.lora_X_b_v,
+            self.lora_X_a_v,  # Reusing the same for k and v
+            self.lora_X_b_v
         )
 
         if sr_ratio > 1:
@@ -216,14 +159,8 @@ class Attention(nn.Module):
         # Apply LoRA to Q
         if type == 'rgb':
             q = self.lora_rgb_q(x).reshape(B, N, self.head, C // self.head).permute(0, 2, 1, 3)
-        elif type == 'depth':
-            q = self.lora_depth_q(x).reshape(B, N, self.head, C // self.head).permute(0, 2, 1, 3)
-        elif type == 'event':
-            q = self.lora_event_q(x).reshape(B, N, self.head, C // self.head).permute(0, 2, 1, 3)
-        elif type == 'lidar':
-            q = self.lora_lidar_q(x).reshape(B, N, self.head, C // self.head).permute(0, 2, 1, 3)
-        elif type == 'share':
-            q = self.lora_share_q(x).reshape(B, N, self.head, C // self.head).permute(0, 2, 1, 3)
+        elif type == 'X':
+            q = self.lora_X_q(x).reshape(B, N, self.head, C // self.head).permute(0, 2, 1, 3)
 
         if self.sr_ratio > 1:
             # Apply spatial reduction and normalization
@@ -234,14 +171,8 @@ class Attention(nn.Module):
         # Apply LoRA to KV
         if type == 'rgb':
             k, v = self.lora_rgb_kv(x).reshape(B, -1, 2, self.head, C // self.head).permute(2, 0, 3, 1, 4)
-        elif type == 'depth':
-            k, v = self.lora_depth_kv(x).reshape(B, -1, 2, self.head, C // self.head).permute(2, 0, 3, 1, 4)
-        elif type == 'event':
-            k, v = self.lora_event_kv(x).reshape(B, -1, 2, self.head, C // self.head).permute(2, 0, 3, 1, 4)
-        elif type == 'lidar':
-            k, v = self.lora_lidar_kv(x).reshape(B, -1, 2, self.head, C // self.head).permute(2, 0, 3, 1, 4)
-        elif type == 'share':
-            k, v = self.lora_share_kv(x).reshape(B, -1, 2, self.head, C // self.head).permute(2, 0, 3, 1, 4)
+        elif type == 'X':
+            k, v = self.lora_X_kv(x).reshape(B, -1, 2, self.head, C // self.head).permute(2, 0, 3, 1, 4)
 
         # Compute attention
         attn = (q @ k.transpose(-2, -1)) * self.scale
@@ -288,29 +219,12 @@ class MLP(nn.Module):
         self.lora_rgb_a_fc2 = nn.Linear(c2, r, bias=False)
         self.lora_rgb_b_fc2 = nn.Linear(r, c1, bias=False)
 
-        # LoRA layers for depth
-        self.lora_depth_a_fc1 = nn.Linear(c1, r, bias=False)
-        self.lora_depth_b_fc1 = nn.Linear(r, c2, bias=False)
-        self.lora_depth_a_fc2 = nn.Linear(c2, r, bias=False)
-        self.lora_depth_b_fc2 = nn.Linear(r, c1, bias=False)
+        # LoRA layers for X
+        self.lora_X_a_fc1 = nn.Linear(c1, r, bias=False)
+        self.lora_X_b_fc1 = nn.Linear(r, c2, bias=False)
+        self.lora_X_a_fc2 = nn.Linear(c2, r, bias=False)
+        self.lora_X_b_fc2 = nn.Linear(r, c1, bias=False)
 
-        # LoRA layers for event
-        self.lora_event_a_fc1 = nn.Linear(c1, r, bias=False)
-        self.lora_event_b_fc1 = nn.Linear(r, c2, bias=False)
-        self.lora_event_a_fc2 = nn.Linear(c2, r, bias=False)
-        self.lora_event_b_fc2 = nn.Linear(r, c1, bias=False)
-
-        # LoRA layers for lidar
-        self.lora_lidar_a_fc1 = nn.Linear(c1, r, bias=False)
-        self.lora_lidar_b_fc1 = nn.Linear(r, c2, bias=False)
-        self.lora_lidar_a_fc2 = nn.Linear(c2, r, bias=False)
-        self.lora_lidar_b_fc2 = nn.Linear(r, c1, bias=False)
-
-        # LoRA layers for share
-        self.lora_share_a_fc1 = nn.Linear(c1, r, bias=False)
-        self.lora_share_b_fc1 = nn.Linear(r, c2, bias=False)
-        self.lora_share_a_fc2 = nn.Linear(c2, r, bias=False)
-        self.lora_share_b_fc2 = nn.Linear(r, c1, bias=False)
 
     def forward(self, x: Tensor, H, W, type) -> Tensor:
         # Original fc1 output
@@ -318,14 +232,9 @@ class MLP(nn.Module):
         # LoRA adjustment to fc1
         if type == 'rgb':
             out_fc1_lora = self.lora_rgb_b_fc1(self.lora_rgb_a_fc1(x))
-        elif type == 'depth':
-            out_fc1_lora = self.lora_depth_b_fc1(self.lora_depth_a_fc1(x))
-        elif type == 'event':
-            out_fc1_lora = self.lora_event_b_fc1(self.lora_event_a_fc1(x))
-        elif type == 'lidar':
-            out_fc1_lora = self.lora_lidar_b_fc1(self.lora_lidar_a_fc1(x))
-        elif type == 'share':
-            out_fc1_lora = self.lora_share_b_fc1(self.lora_share_a_fc1(x))
+        elif type == 'X':
+            out_fc1_lora = self.lora_X_b_fc1(self.lora_X_a_fc1(x))
+
         out_fc1 = out_fc1 + out_fc1_lora  # Combine original and LoRA
 
         # Apply depth-wise convolution
@@ -339,14 +248,8 @@ class MLP(nn.Module):
         # LoRA adjustment to fc2
         if type == 'rgb':
             out_fc2_lora = self.lora_rgb_b_fc2(self.lora_rgb_a_fc2(out_act))
-        elif type == 'depth':
-            out_fc2_lora = self.lora_depth_b_fc2(self.lora_depth_a_fc2(out_act))
-        elif type == 'event':
-            out_fc2_lora = self.lora_event_b_fc2(self.lora_event_a_fc2(out_act))
-        elif type == 'lidar':
-            out_fc2_lora = self.lora_lidar_b_fc2(self.lora_lidar_a_fc2(out_act))
-        elif type == 'share':
-            out_fc2_lora = self.lora_share_b_fc2(self.lora_share_a_fc2(out_act))
+        elif type == 'X':
+            out_fc2_lora = self.lora_X_b_fc2(self.lora_X_a_fc2(out_act))
         out_fc2 = out_fc2 + out_fc2_lora  # Combine original and LoRA
 
         return out_fc2
@@ -488,10 +391,35 @@ class LayerNormParallel(nn.Module):
         return [getattr(self, 'ln_' + str(i))(x) for i, x in enumerate(x_parallel)]
 
 
+class ConcatAndReduceChannels(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        """
+        :param in_channels: 每个输入 Tensor 的通道数 C
+        :param out_channels: 降维后的通道数 C
+        """
+        super(ConcatAndReduceChannels, self).__init__()
+
+        # 使用 1x1 卷积来将 3C 通道降到 C
+        self.conv = nn.Conv2d(in_channels * 3, out_channels, kernel_size=1)
+
+    def forward(self, x_ext):
+        """
+        :param x_ext: 一个包含三个形状为 [B, C, H, W] 的 Tensor 的列表
+        :return: 输出为一个形状为 [B, C, H, W] 的 Tensor
+        """
+        # 在通道维度 (dim=1) 上连接 3 个张量
+        x = torch.cat(x_ext, dim=1)  # 输出的形状将是 [B, 3C, H, W]
+
+        # 使用 1x1 卷积将通道数从 3C 降到 C
+        x = self.conv(x)
+
+        return x
+
+
 cmnext_settings = {
     # 'B0': [[32, 64, 160, 256], [2, 2, 2, 2]],
     'B1': [[64, 128, 320, 512], [2, 2, 2, 2]],
-    # 'B2': [[64, 128, 320, 512], [3, 4, 6, 3]],
+    'B2': [[64, 128, 320, 512], [3, 4, 6, 3]],
     # 'B2': [[64, 128, 320, 512], [2, 2, 2, 2]],
     # 'B3': [[64, 128, 320, 512], [3, 4, 18, 3]],
     'B4': [[64, 128, 320, 512], [3, 8, 27, 3]],
@@ -514,10 +442,10 @@ class CMNeXt(nn.Module):
         # print('backbone cmnext weight_h_ori', weight_h_ori)
 
         if self.num_modals > 0:  ######
-            self.moe1 = MoE_lora_new(3, embed_dims[0], 7, 4, 7 // 2, 3, 1024, True, 2)
-            self.moe2 = MoE_lora_new(64, embed_dims[1], 3, 2, 3 // 2, 3, 256, True, 2)
-            self.moe3 = MoE_lora_new(128, embed_dims[2], 3, 2, 3 // 2, 3, 128, True, 2)
-            self.moe4 = MoE_lora_new(320, embed_dims[3], 3, 2, 3 // 2, 3, 64, True, 2)
+            self.moe1 = MoE_lora_new(3, embed_dims[0], 7, 4, 7 // 2, 6, 1024, True, 2)
+            self.moe2 = MoE_lora_new(64, embed_dims[1], 3, 2, 3 // 2, 6, 256, True, 2)
+            self.moe3 = MoE_lora_new(128, embed_dims[2], 3, 2, 3 // 2, 6, 128, True, 2)
+            self.moe4 = MoE_lora_new(320, embed_dims[3], 3, 2, 3 // 2, 6, 64, True, 2)
 
         self.attn_gate1 = AttentionWeightedSum()
         self.attn_gate2 = AttentionWeightedSum()
@@ -534,6 +462,11 @@ class CMNeXt(nn.Module):
         # self.final_conv3 = FinalConvProcessor(embed_dims[2], embed_dims[2])
         # self.final_conv4 = FinalConvProcessor(embed_dims[3], embed_dims[3])
 
+        self.concat_reduce_channels1 = ConcatAndReduceChannels(3, 3)
+        self.concat_reduce_channels2 = ConcatAndReduceChannels(embed_dims[0], embed_dims[0])
+        self.concat_reduce_channels3 = ConcatAndReduceChannels(embed_dims[1], embed_dims[1])
+        self.concat_reduce_channels4 = ConcatAndReduceChannels(embed_dims[2], embed_dims[2])
+
         # patch_embed
         self.patch_embed1 = PatchEmbed(3, embed_dims[0], 7, 4, 7 // 2)
         self.patch_embed2 = PatchEmbed(embed_dims[0], embed_dims[1], 3, 2, 3 // 2)
@@ -546,21 +479,17 @@ class CMNeXt(nn.Module):
         self.block1 = nn.ModuleList([Block(embed_dims[0], 1, 8, dpr[cur + i]) for i in range(depths[0])])
         self.norm1 = nn.LayerNorm(embed_dims[0])
 
-
         cur += depths[0]
         self.block2 = nn.ModuleList([Block(embed_dims[1], 2, 4, dpr[cur + i]) for i in range(depths[1])])
         self.norm2 = nn.LayerNorm(embed_dims[1])
-
 
         cur += depths[1]
         self.block3 = nn.ModuleList([Block(embed_dims[2], 5, 2, dpr[cur + i]) for i in range(depths[2])])
         self.norm3 = nn.LayerNorm(embed_dims[2])
 
-
         cur += depths[2]
         self.block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
         self.norm4 = nn.LayerNorm(embed_dims[3])
-
 
         if self.num_modals > 0:
             num_heads = [1, 2, 5, 8]
@@ -612,32 +541,19 @@ class CMNeXt(nn.Module):
 
         if self.num_modals > 0:
             ## ------ MeMe ------ ##
-            x_ext_moe, x_f, loss_moe1 = self.moe1(x_ext)
-
-            ## ------ shared feature encoder lora process ------ ##
-            x_f = x_f.flatten(2).transpose(1, 2)
-            for blk in self.block1:
-                x_f = blk(x_f, H, W, 'share')
-            x1_f = self.norm1(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
-            del x_f
-            torch.cuda.empty_cache()
+            x_ext_moe, loss_moe1 = self.moe1(x_ext)
 
             ## ------ diff feature encoder lora process ------ ##
-            for i in range(self.num_modals):
-                x_ext[i], _, _ = self.patch_embed1(x_ext[i])
-                if i == 0:
-                    for blk in self.block1:
-                        x_ext[i] = blk(x_ext[i], H, W, 'depth')
-                elif i == 1:
-                    for blk in self.block1:
-                        x_ext[i] = blk(x_ext[i], H, W, 'event')
-                elif i == 2:
-                    for blk in self.block1:
-                        x_ext[i] = blk(x_ext[i], H, W, 'lidar')
-                x_ext[i] = self.norm1(x_ext[i] + x_ext_moe[i].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+            x_f = self.concat_reduce_channels1(x_ext)
+            x_f, _, _ = self.patch_embed1(x_f)
+            for blk in self.block1:
+                x_f = blk(x_f, H, W, 'X')
 
-            del x_ext_moe
+            x1_f = self.norm1(x_f + x_ext_moe[0].flatten(2).transpose(1, 2) + x_ext_moe[1].flatten(2).transpose(1, 2)
+                              + x_ext_moe[2].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+            x_ext = x_ext_moe
+
+            del x_ext_moe, x_f
             torch.cuda.empty_cache()
 
             ## ------ rgb & X_share fusion ------ ##
@@ -669,32 +585,19 @@ class CMNeXt(nn.Module):
 
         if self.num_modals > 0:
             ## ------ MeMe ------ ##
-            x_ext_moe, x_f, loss_moe2 = self.moe2(x_ext)
-
-            ## ------ shared feature encoder lora process ------ ##
-            x_f = x_f.flatten(2).transpose(1, 2)
-            for blk in self.block2:
-                x_f = blk(x_f, H, W, 'share')
-            x2_f = self.norm2(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
-            del x_f
-            torch.cuda.empty_cache()
+            x_ext_moe, loss_moe2 = self.moe2(x_ext)
 
             ## ------ diff feature encoder lora process ------ ##
-            for i in range(self.num_modals):
-                x_ext[i], _, _ = self.patch_embed2(x_ext[i])
-                if i == 0:
-                    for blk in self.block2:
-                        x_ext[i] = blk(x_ext[i], H, W, 'depth')
-                elif i == 1:
-                    for blk in self.block2:
-                        x_ext[i] = blk(x_ext[i], H, W, 'event')
-                elif i == 2:
-                    for blk in self.block2:
-                        x_ext[i] = blk(x_ext[i], H, W, 'lidar')
-                x_ext[i] = self.norm2(x_ext[i] + x_ext_moe[i].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+            x_f = self.concat_reduce_channels2(x_ext)
+            x_f, _, _ = self.patch_embed2(x_f)
+            for blk in self.block2:
+                x_f = blk(x_f, H, W, 'X')
 
-            del x_ext_moe
+            x2_f = self.norm2(x_f + x_ext_moe[0].flatten(2).transpose(1, 2) + x_ext_moe[1].flatten(2).transpose(1, 2)
+                              + x_ext_moe[2].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+            x_ext = x_ext_moe
+
+            del x_ext_moe, x_f
             torch.cuda.empty_cache()
 
             ## ------ rgb & X_share fusion ------ ##
@@ -725,32 +628,19 @@ class CMNeXt(nn.Module):
 
         if self.num_modals > 0:
             ## ------ MeMe ------ ##
-            x_ext_moe, x_f, loss_moe3 = self.moe3(x_ext)
-
-            ## ------ shared feature encoder lora process ------ ##
-            x_f = x_f.flatten(2).transpose(1, 2)
-            for blk in self.block3:
-                x_f = blk(x_f, H, W, 'share')
-            x3_f = self.norm3(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
-            del x_f
-            torch.cuda.empty_cache()
+            x_ext_moe, loss_moe3 = self.moe3(x_ext)
 
             ## ------ diff feature encoder lora process ------ ##
-            for i in range(self.num_modals):
-                x_ext[i], _, _ = self.patch_embed3(x_ext[i])
-                if i == 0:
-                    for blk in self.block3:
-                        x_ext[i] = blk(x_ext[i], H, W, 'depth')
-                elif i == 1:
-                    for blk in self.block3:
-                        x_ext[i] = blk(x_ext[i], H, W, 'event')
-                elif i == 2:
-                    for blk in self.block3:
-                        x_ext[i] = blk(x_ext[i], H, W, 'lidar')
-                x_ext[i] = self.norm3(x_ext[i] + x_ext_moe[i].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+            x_f = self.concat_reduce_channels3(x_ext)
+            x_f, _, _ = self.patch_embed3(x_f)
+            for blk in self.block3:
+                x_f = blk(x_f, H, W, 'X')
 
-            del x_ext_moe
+            x3_f = self.norm3(x_f + x_ext_moe[0].flatten(2).transpose(1, 2) + x_ext_moe[1].flatten(2).transpose(1, 2)
+                              + x_ext_moe[2].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+            x_ext = x_ext_moe
+
+            del x_ext_moe, x_f
             torch.cuda.empty_cache()
 
             ## ------ rgb & X_share fusion ------ ##
@@ -781,32 +671,19 @@ class CMNeXt(nn.Module):
 
         if self.num_modals > 0:
             ## ------ MeMe ------ ##
-            x_ext_moe, x_f, loss_moe4 = self.moe4(x_ext)
-
-            ## ------ shared feature encoder lora process ------ ##
-            x_f = x_f.flatten(2).transpose(1, 2)
-            for blk in self.block4:
-                x_f = blk(x_f, H, W, 'share')
-            x4_f = self.norm4(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
-            del x_f
-            torch.cuda.empty_cache()
+            x_ext_moe, loss_moe4 = self.moe4(x_ext)
 
             ## ------ diff feature encoder lora process ------ ##
-            for i in range(self.num_modals):
-                x_ext[i], _, _ = self.patch_embed4(x_ext[i])
-                if i == 0:
-                    for blk in self.block4:
-                        x_ext[i] = blk(x_ext[i], H, W, 'depth')
-                elif i == 1:
-                    for blk in self.block4:
-                        x_ext[i] = blk(x_ext[i], H, W, 'event')
-                elif i == 2:
-                    for blk in self.block4:
-                        x_ext[i] = blk(x_ext[i], H, W, 'lidar')
-                x_ext[i] = self.norm4(x_ext[i] + x_ext_moe[i].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+            x_f = self.concat_reduce_channels4(x_ext)
+            x_f, _, _ = self.patch_embed4(x_f)
+            for blk in self.block4:
+                x_f = blk(x_f, H, W, 'X')
 
-            del x_ext_moe
+            x4_f = self.norm4(x_f + x_ext_moe[0].flatten(2).transpose(1, 2) + x_ext_moe[1].flatten(2).transpose(1, 2)
+                              + x_ext_moe[2].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+            x_ext = x_ext_moe
+
+            del x_ext_moe, x_f
             torch.cuda.empty_cache()
 
             ## ------ rgb & X_share fusion ------ ##
@@ -865,7 +742,7 @@ def print_memory_usage(step=""):
 
 if __name__ == '__main__':
     modals = ['rgb', 'depth', 'event', 'lidar']
-    device = torch.device('cuda')  # 使用 GPU
+    device = torch.device('cpu')  # 使用 GPU
     x = [torch.ones(2, 3, 1024, 1024).to(device),
          torch.ones(2, 3, 1024, 1024).to(device),
          (torch.ones(2, 3, 1024, 1024) * 2).to(device),

@@ -610,7 +610,7 @@ class MoE_lora_new(nn.Module):
         self.k = k
         # instantiate experts
         self.experts = nn.ModuleList([Mlp_lowrank(self.c11, self.c21, self.patch_size1, self.stride1, self.padding1) for i in range(self.num_experts)])
-        self.shared_expert = Mlp_lowrank(self.c11, self.c21, self.patch_size1, self.stride1, self.padding1)
+        # self.shared_expert = Mlp_lowrank(self.c11, self.c21, self.patch_size1, self.stride1, self.padding1)
         self.w_gate = nn.Parameter(torch.zeros(self.width, num_experts), requires_grad=True)
         self.w_noise = nn.Parameter(torch.zeros(self.width, num_experts), requires_grad=True)
 
@@ -618,6 +618,10 @@ class MoE_lora_new(nn.Module):
         self.softmax = nn.Softmax(1)
         self.register_buffer("mean", torch.tensor([0.0]))
         self.register_buffer("std", torch.tensor([1.0]))
+
+        # 实例化损失函数
+        self.loss_fn = ExpertsContrastiveLoss(temperature=0.07)
+        
         assert(self.k <= self.num_experts)
 
     def cv_squared(self, x):
@@ -743,9 +747,8 @@ class MoE_lora_new(nn.Module):
 
 
     def forward(self, xs, loss_coef=1e-2):
-        total_expert_loss = 0
         total_loss = 0
-        final_shared_outputs = []
+        # final_shared_outputs = []
         final_diff_outputs = []
         for x in xs:
 
@@ -754,10 +757,10 @@ class MoE_lora_new(nn.Module):
             importance = gates.sum(0)
             loss = self.cv_squared(importance) + self.cv_squared(load)
             loss *= loss_coef
-            total_expert_loss += loss
+            total_loss += loss
 
             dispatcher = SparseDispatcher(self.num_experts, gates)
-            shared_x = self.shared_expert(x)
+            # shared_x = self.shared_expert(x)
 
             expert_inputs_x = dispatcher.dispatch(x)
 
@@ -771,54 +774,21 @@ class MoE_lora_new(nn.Module):
 
 
             final_diff_outputs.append(x_res)
-            final_shared_outputs.append(shared_x)
+            # final_shared_outputs.append(shared_x)
 
-        shared_stacked_tensor = torch.stack(final_shared_outputs)
-        shared_mean_tensor = torch.mean(shared_stacked_tensor, dim=0)
+        # shared_stacked_tensor = torch.stack(final_shared_outputs)
+        # shared_mean_tensor = torch.mean(shared_stacked_tensor, dim=0)
 
-        # Compute uniformity loss (mean squared error between shared and individual features)
-        uniformity_loss = 0
-        for diff_output in final_diff_outputs:
-            p = F.log_softmax(shared_mean_tensor.view(shared_mean_tensor.size(0), -1), dim=-1)
-            q = F.softmax(diff_output.view(diff_output.size(0), -1), dim=-1)
-            uniformity_loss += self.compute_symmetric_kl_loss(p, q)
-
-        # Compute distinctiveness loss (KL divergence between individual features)
-        distinctiveness_loss = 0
-        epsilon = 1e-6
-        for i in range(len(final_diff_outputs)):
-            for j in range(i + 1, len(final_diff_outputs)):
-                p = F.log_softmax(final_diff_outputs[i].view(final_diff_outputs[i].size(0), -1), dim=-1)
-                q = F.softmax(final_diff_outputs[j].view(final_diff_outputs[j].size(0), -1), dim=-1)
-                kl_loss = self.compute_symmetric_kl_loss(p, q)
-                distinctiveness_loss += 1 / (kl_loss + epsilon)
-
-        # Ensure total_loss is non-negative and balanced
-        total_loss += uniformity_loss + 0.1 * distinctiveness_loss + total_expert_loss
-
-        return final_diff_outputs, shared_mean_tensor, total_loss
+        # # Compute uniformity loss (mean squared error between shared and individual features)
+        # uniformity_loss = 0
+        # for diff_output in final_diff_outputs:
+        #     p = F.log_softmax(shared_mean_tensor.view(shared_mean_tensor.size(0), -1), dim=-1)
+        #     q = F.softmax(diff_output.view(diff_output.size(0), -1), dim=-1)
+        #     uniformity_loss += self.compute_symmetric_kl_loss(p, q)
 
 
-class AttentionFusion(nn.Module):
-    def __init__(self, in_channels, inter_channels=None):
-        super(AttentionFusion, self).__init__()
-        if inter_channels is None:
-            inter_channels = in_channels
+        return final_diff_outputs, total_loss
 
-        self.rgb_conv = nn.Conv2d(in_channels, inter_channels, kernel_size=1)
-        self.shared_conv = nn.Conv2d(in_channels, inter_channels, kernel_size=1)
-        self.fusion_conv = nn.Conv2d(inter_channels, in_channels, kernel_size=1)
-
-        self.softmax = nn.Softmax(dim=1)
-
-    def forward(self, rgb, shared):
-        rgb_proj = self.rgb_conv(rgb)
-        shared_proj = self.shared_conv(shared)
-
-        attention_map = self.softmax(rgb_proj + shared_proj)
-        fused_tensor = attention_map * rgb + (1 - attention_map) * shared
-
-        return self.fusion_conv(fused_tensor)
 
 
 class MoE_lora_rgb(nn.Module):
@@ -1179,6 +1149,7 @@ class AllInOne_lora(nn.Module):
         self.softmax = nn.Softmax(1)
         self.register_buffer("mean", torch.tensor([0.0]))
         self.register_buffer("std", torch.tensor([1.0]))
+
         assert (self.k <= self.num_experts)
 
     def cv_squared(self, x):
@@ -1325,42 +1296,41 @@ class AllInOne_lora(nn.Module):
         return final_ext_output, final_output, total_loss
 
 
-class ExpertsContrastiveLoss(torch.nn.Module):
+class ExpertsContrastiveLoss(nn.Module):
     def __init__(self, temperature=0.07):
         super(ExpertsContrastiveLoss, self).__init__()
         self.temperature = temperature
 
     def forward(self, expert_outputs):
-        """
-        Args:
-            expert_outputs: list of expert outputs (E(x) = [E1(x), E2(x), ..., En(x)])
-                            Each expert_output has shape (num_tokens, hidden_dim)
-        Returns:
-            loss: The Experts Contrastive Loss
-        """
-        # Concatenate all expert outputs into one tensor
-        all_expert_outputs = torch.cat(expert_outputs, dim=0)  # Shape: (total_tokens, hidden_dim)
+        for x in expert_outputs:
+            print(x.shape)
+        raise Exception
+        batch_size = expert_outputs[0].size(0)  # 获取batch size
 
-        # Normalize the expert outputs
-        all_expert_outputs = F.normalize(all_expert_outputs, p=2, dim=1)  # Shape: (total_tokens, hidden_dim)
+        # 展平每个专家输出为 [B, C*H*W]
+        expert_outputs = [x.view(batch_size, -1) for x in expert_outputs]
 
-        # Calculate pairwise cosine similarities
-        similarity_matrix = torch.matmul(all_expert_outputs,
-                                         all_expert_outputs.T)  # Shape: (total_tokens, total_tokens)
+        # 检查展平后的输出是否具有相同的尺寸
+        flattened_sizes = [x.size(1) for x in expert_outputs]
+        if len(set(flattened_sizes)) != 1:
+            raise ValueError(f"专家输出尺寸不一致，展平后的尺寸为: {flattened_sizes}")
 
-        # Divide by temperature
+        # 将所有专家输出沿batch维度拼接，形状为 (B*n_experts, C*H*W)
+        all_expert_outputs = torch.cat(expert_outputs, dim=0)
+
+        # 归一化输出
+        all_expert_outputs = F.normalize(all_expert_outputs, p=2, dim=1)
+
+        # 计算pairwise 余弦相似度
+        similarity_matrix = torch.matmul(all_expert_outputs, all_expert_outputs.T)
+
+        # 除以温度参数
         similarity_matrix /= self.temperature
 
-        # Create labels for contrastive learning (positive pairs within the same expert)
-        labels = []
-        start_idx = 0
-        for expert_output in expert_outputs:
-            num_tokens = expert_output.size(0)
-            labels.append(torch.arange(start_idx, start_idx + num_tokens))
-            start_idx += num_tokens
-        labels = torch.cat(labels).to(similarity_matrix.device)
+        # 创建标签用于对比学习
+        labels = torch.arange(batch_size).repeat(len(expert_outputs)).to(similarity_matrix.device)
 
-        # Apply contrastive loss
+        # 计算对比损失
         contrastive_loss = F.cross_entropy(similarity_matrix, labels)
 
         return contrastive_loss
