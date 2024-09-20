@@ -20,17 +20,17 @@ from semseg.models.modules.moe_lora import MoE_lora_new, AttentionWeightedSum, C
 # import numpy as np
 # from copy import deepcopy
 #
-import torch
-import psutil
-import os
-
-# 获取当前进程的 PID
-pid = os.getpid()
-# 获取当前进程的内存信息
-process = psutil.Process(pid)
+# import torch
+# import psutil
+# import os
 #
-# import torch.optim as optim
-from torch.cuda.amp import autocast, GradScaler
+# # 获取当前进程的 PID
+# pid = os.getpid()
+# # 获取当前进程的内存信息
+# process = psutil.Process(pid)
+# #
+# # import torch.optim as optim
+# from torch.cuda.amp import autocast, GradScaler
 
 
 # class Attention(nn.Module):
@@ -530,7 +530,7 @@ class CMNeXt(nn.Module):
 
         # ------ stage 1 ------ #
         ## ------ rgb encoder lora process ------ ##
-        print_memory_usage("Before stage1")
+        # print_memory_usage("Before stage1")
         x_cam, H, W = self.patch_embed1(x_cam)
         for blk in self.block1:
             x_cam = blk(x_cam, H, W, 'rgb')
@@ -574,7 +574,7 @@ class CMNeXt(nn.Module):
 
         # ------ stage 2 ------ #
         ## ------ rgb encoder lora process ------ ##
-        print_memory_usage("Before stage2")
+        # print_memory_usage("Before stage2")
         x1_cam, H, W = self.patch_embed2(x1_cam)
         for blk in self.block2:
             x1_cam = blk(x1_cam, H, W, 'rgb')
@@ -617,7 +617,7 @@ class CMNeXt(nn.Module):
 
         # ------ stage 3 ------ #
         ## ------ rgb encoder lora process ------ ##
-        print_memory_usage("Before stage3")
+        # print_memory_usage("Before stage3")
         x2_cam, H, W = self.patch_embed3(x2_cam)
         for blk in self.block3:
             x2_cam = blk(x2_cam, H, W, 'rgb')
@@ -660,7 +660,7 @@ class CMNeXt(nn.Module):
 
         # ------ stage 4 ------ #
         ## ------ rgb encoder lora process ------ ##
-        print_memory_usage("Before stage4")
+        # print_memory_usage("Before stage4")
         x3_cam, H, W = self.patch_embed4(x3_cam)
         for blk in self.block4:
             x3_cam = blk(x3_cam, H, W, 'rgb')
