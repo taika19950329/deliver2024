@@ -20,14 +20,14 @@ from semseg.models.modules.moe_lora import MoE_lora_new, AttentionWeightedSum, C
 # import numpy as np
 # from copy import deepcopy
 #
-import torch
-import psutil
-import os
-
-# 获取当前进程的 PID
-pid = os.getpid()
-# 获取当前进程的内存信息
-process = psutil.Process(pid)
+# import torch
+# import psutil
+# import os
+#
+# # 获取当前进程的 PID
+# pid = os.getpid()
+# # 获取当前进程的内存信息
+# process = psutil.Process(pid)
 #
 # import torch.optim as optim
 # from torch.cuda.amp import autocast, GradScaler
@@ -513,17 +513,6 @@ class CMNeXt(nn.Module):
         norm_cfg = dict(type='BN', requires_grad=True)
         # print('backbone cmnext weight_h_ori', weight_h_ori)
 
-        if self.num_modals > 0:  ######
-            self.moe1 = MoE_lora_new(3, embed_dims[0], 7, 4, 7 // 2, 3, 1024, True, 2)
-            self.moe2 = MoE_lora_new(64, embed_dims[1], 3, 2, 3 // 2, 3, 256, True, 2)
-            self.moe3 = MoE_lora_new(128, embed_dims[2], 3, 2, 3 // 2, 3, 128, True, 2)
-            self.moe4 = MoE_lora_new(320, embed_dims[3], 3, 2, 3 // 2, 3, 64, True, 2)
-
-        self.attn_gate1 = AttentionWeightedSum()
-        self.attn_gate2 = AttentionWeightedSum()
-        self.attn_gate3 = AttentionWeightedSum()
-        self.attn_gate4 = AttentionWeightedSum()
-
         self.concat_conv1 = ConcatAndConv(3 * embed_dims[0], embed_dims[0])  ######
         self.concat_conv2 = ConcatAndConv(3 * embed_dims[1], embed_dims[1])
         self.concat_conv3 = ConcatAndConv(3 * embed_dims[2], embed_dims[2])
@@ -601,7 +590,7 @@ class CMNeXt(nn.Module):
 
         # ------ stage 1 ------ #
         ## ------ rgb encoder lora process ------ ##
-        print_memory_usage("Before stage1")
+        # print_memory_usage("Before stage1")
         x_cam, H, W = self.patch_embed1(x_cam)
         for blk in self.block1:
             x_cam = blk(x_cam, H, W, 'rgb')
@@ -611,18 +600,6 @@ class CMNeXt(nn.Module):
         torch.cuda.empty_cache()
 
         if self.num_modals > 0:
-            ## ------ MeMe ------ ##
-            x_ext_moe, x_f, loss_moe1 = self.moe1(x_ext)
-
-            ## ------ shared feature encoder lora process ------ ##
-            x_f = x_f.flatten(2).transpose(1, 2)
-            for blk in self.block1:
-                x_f = blk(x_f, H, W, 'share')
-            x1_f = self.norm1(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
-            del x_f
-            torch.cuda.empty_cache()
-
             ## ------ diff feature encoder lora process ------ ##
             for i in range(self.num_modals):
                 x_ext[i], _, _ = self.patch_embed1(x_ext[i])
@@ -635,30 +612,23 @@ class CMNeXt(nn.Module):
                 elif i == 2:
                     for blk in self.block1:
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
-                x_ext[i] = self.norm1(x_ext[i] + x_ext_moe[i].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+                x_ext[i] = self.norm1(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-            del x_ext_moe
-            torch.cuda.empty_cache()
+            x1_f = self.concat_conv1(x_ext)
 
             ## ------ rgb & X_share fusion ------ ##
             x1_cam, x1_f = self.FRMs[0](x1_cam, x1_f)
             x_fused = self.FFMs[0](x1_cam, x1_f)
+            outs.append(x_fused)
 
-            ## ------ rgb & X_diff fusion ------ ##
-            x_ext_attn = self.attn_gate1(x_ext, x_fused)
-            # expert_combine_output = self.concat_conv1(x_ext_attn)
-            # final_fused = self.final_conv1(expert_combine_output, x_fused)
-            final_fused = self.concat_conv1(x_ext_attn)
-            outs.append(final_fused)
-
-            del final_fused, x_ext_attn
+            del x_fused, x1_f
             torch.cuda.empty_cache()
         else:
             outs.append(x1_cam)
 
         # ------ stage 2 ------ #
         ## ------ rgb encoder lora process ------ ##
-        print_memory_usage("Before stage2")
+        # print_memory_usage("Before stage2")
         x1_cam, H, W = self.patch_embed2(x1_cam)
         for blk in self.block2:
             x1_cam = blk(x1_cam, H, W, 'rgb')
@@ -668,18 +638,6 @@ class CMNeXt(nn.Module):
         torch.cuda.empty_cache()
 
         if self.num_modals > 0:
-            ## ------ MeMe ------ ##
-            x_ext_moe, x_f, loss_moe2 = self.moe2(x_ext)
-
-            ## ------ shared feature encoder lora process ------ ##
-            x_f = x_f.flatten(2).transpose(1, 2)
-            for blk in self.block2:
-                x_f = blk(x_f, H, W, 'share')
-            x2_f = self.norm2(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
-            del x_f
-            torch.cuda.empty_cache()
-
             ## ------ diff feature encoder lora process ------ ##
             for i in range(self.num_modals):
                 x_ext[i], _, _ = self.patch_embed2(x_ext[i])
@@ -692,29 +650,23 @@ class CMNeXt(nn.Module):
                 elif i == 2:
                     for blk in self.block2:
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
-                x_ext[i] = self.norm2(x_ext[i] + x_ext_moe[i].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+                x_ext[i] = self.norm2(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-            del x_ext_moe
-            torch.cuda.empty_cache()
+            x2_f = self.concat_conv2(x_ext)
 
             ## ------ rgb & X_share fusion ------ ##
             x2_cam, x2_f = self.FRMs[1](x2_cam, x2_f)
             x_fused = self.FFMs[1](x2_cam, x2_f)
+            outs.append(x_fused)
 
-            ## ------ rgb & X_diff fusion ------ ##
-            x_ext_attn = self.attn_gate2(x_ext, x_fused)
-            # expert_combine_output = self.concat_conv2(x_ext_attn)
-            final_fused = self.concat_conv2(x_ext_attn)
-            outs.append(final_fused)
-
-            del final_fused, x_ext_attn
+            del x_fused, x2_f
             torch.cuda.empty_cache()
         else:
             outs.append(x2_cam)
 
         # ------ stage 3 ------ #
         ## ------ rgb encoder lora process ------ ##
-        print_memory_usage("Before stage3")
+        # print_memory_usage("Before stage3")
         x2_cam, H, W = self.patch_embed3(x2_cam)
         for blk in self.block3:
             x2_cam = blk(x2_cam, H, W, 'rgb')
@@ -724,18 +676,6 @@ class CMNeXt(nn.Module):
         torch.cuda.empty_cache()
 
         if self.num_modals > 0:
-            ## ------ MeMe ------ ##
-            x_ext_moe, x_f, loss_moe3 = self.moe3(x_ext)
-
-            ## ------ shared feature encoder lora process ------ ##
-            x_f = x_f.flatten(2).transpose(1, 2)
-            for blk in self.block3:
-                x_f = blk(x_f, H, W, 'share')
-            x3_f = self.norm3(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
-            del x_f
-            torch.cuda.empty_cache()
-
             ## ------ diff feature encoder lora process ------ ##
             for i in range(self.num_modals):
                 x_ext[i], _, _ = self.patch_embed3(x_ext[i])
@@ -748,29 +688,23 @@ class CMNeXt(nn.Module):
                 elif i == 2:
                     for blk in self.block3:
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
-                x_ext[i] = self.norm3(x_ext[i] + x_ext_moe[i].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+                x_ext[i] = self.norm3(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-            del x_ext_moe
-            torch.cuda.empty_cache()
+            x3_f = self.concat_conv3(x_ext)
 
             ## ------ rgb & X_share fusion ------ ##
             x3_cam, x3_f = self.FRMs[2](x3_cam, x3_f)
             x_fused = self.FFMs[2](x3_cam, x3_f)
+            outs.append(x_fused)
 
-            ## ------ rgb & X_diff fusion ------ ##
-            x_ext_attn = self.attn_gate3(x_ext, x_fused)
-            # expert_combine_output = self.concat_conv3(x_ext_attn)
-            final_fused = self.concat_conv3(x_ext_attn)
-            outs.append(final_fused)
-
-            del final_fused, x_ext_attn
+            del x_fused, x3_f
             torch.cuda.empty_cache()
         else:
             outs.append(x3_cam)
 
         # ------ stage 4 ------ #
         ## ------ rgb encoder lora process ------ ##
-        print_memory_usage("Before stage4")
+        # print_memory_usage("Before stage4")
         x3_cam, H, W = self.patch_embed4(x3_cam)
         for blk in self.block4:
             x3_cam = blk(x3_cam, H, W, 'rgb')
@@ -780,18 +714,6 @@ class CMNeXt(nn.Module):
         torch.cuda.empty_cache()
 
         if self.num_modals > 0:
-            ## ------ MeMe ------ ##
-            x_ext_moe, x_f, loss_moe4 = self.moe4(x_ext)
-
-            ## ------ shared feature encoder lora process ------ ##
-            x_f = x_f.flatten(2).transpose(1, 2)
-            for blk in self.block4:
-                x_f = blk(x_f, H, W, 'share')
-            x4_f = self.norm4(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
-            del x_f
-            torch.cuda.empty_cache()
-
             ## ------ diff feature encoder lora process ------ ##
             for i in range(self.num_modals):
                 x_ext[i], _, _ = self.patch_embed4(x_ext[i])
@@ -804,22 +726,16 @@ class CMNeXt(nn.Module):
                 elif i == 2:
                     for blk in self.block4:
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
-                x_ext[i] = self.norm4(x_ext[i] + x_ext_moe[i].flatten(2).transpose(1, 2)).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+                x_ext[i] = self.norm4(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-            del x_ext_moe
-            torch.cuda.empty_cache()
+            x4_f = self.concat_conv4(x_ext)
 
             ## ------ rgb & X_share fusion ------ ##
             x4_cam, x4_f = self.FRMs[3](x4_cam, x4_f)
             x_fused = self.FFMs[3](x4_cam, x4_f)
+            outs.append(x_fused)
 
-            ## ------ rgb & X_diff fusion ------ ##
-            x_ext_attn = self.attn_gate4(x_ext, x_fused)
-            # expert_combine_output = self.concat_conv4(x_ext_attn)
-            final_fused = self.concat_conv4(x_ext_attn)
-            outs.append(final_fused)
-
-            del final_fused, x_ext_attn
+            del x_fused, x4_f
             torch.cuda.empty_cache()
         else:
             outs.append(x4_cam)

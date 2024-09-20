@@ -57,10 +57,9 @@ def load_dualpath_model(model, model_file):
             state_dict[k] = v
         elif k.find('block') >= 0:
             state_dict[k] = v
-            # state_dict[k.replace('block', 'depth_block')] = v
-            # state_dict[k.replace('block', 'event_block')] = v
-            # state_dict[k.replace('block', 'lidar_block')] = v
-            # state_dict[k.replace('block', 'share_block')] = v
+            # state_dict[k.replace('block', 'shared_extra_block')] = v
+            # state_dict[k.replace('block', 'diff1_extra_block')] = v
+            # state_dict[k.replace('block', 'diff2_extra_block')] = v
             # state_dict[k.replace('block', 'diff3_extra_block')] = v
         elif k.find('norm') >= 0:
             state_dict[k] = v
@@ -68,21 +67,6 @@ def load_dualpath_model(model, model_file):
             # state_dict[k.replace('norm', 'diff1_extra_norm')] = v
             # state_dict[k.replace('norm', 'diff2_extra_norm')] = v
             # state_dict[k.replace('norm', 'diff3_extra_norm')] = v
-
-    # # 冻结所有预训练参数
-    # for param in model.parameters():
-    #     param.requires_grad = False
-    #
-    # # LoRA 部分正常初始化并参与训练
-    # for block in model.blocks:
-    #     for param in block.attn.lora_a_q.parameters():
-    #         param.requires_grad = True
-    #     for param in block.attn.lora_b_q.parameters():
-    #         param.requires_grad = True
-    #     for param in block.attn.lora_a_v.parameters():
-    #         param.requires_grad = True
-    #     for param in block.attn.lora_b_v.parameters():
-    #         param.requires_grad = True
 
     if isinstance(extra_pretrained, str):
         for k, v in raw_state_dict_ext.items():
@@ -118,11 +102,10 @@ def load_dualpath_model(model, model_file):
 
 if __name__ == '__main__':
     modals = ['img', 'depth', 'event', 'lidar']
-    device = torch.device('cpu')
-    x = [torch.zeros(2, 3, 1024, 1024).to(device), torch.ones(2, 3, 1024, 1024).to(device), (torch.ones(2, 3, 1024, 1024) * 2).to(device),
-         (torch.ones(2, 3, 1024, 1024) * 3).to(device)]
-    model = CMNeXt(int(x[0].shape[2] / 4), 'CMNeXt-B1', 25, modals).to(device)
-    model.init_pretrained('/home/yi/Documents/DELIVER/checkpoints/pretrained/segformer/mit_b1.pth')
-    y, moe_loss1, _, _, _ = model(x)
+    x = [torch.zeros(2, 3, 512, 512), torch.ones(2, 3, 512, 512), torch.ones(2, 3, 512, 512) * 2,
+         torch.ones(2, 3, 512, 512) * 3]
+    model = CMNeXt(int(x[0].shape[2] / 4), 'CMNeXt-B2', 25, modals)
+    model.init_pretrained('/home/yi/Documents/DELIVER/checkpoints/pretrained/segformer/mit_b2.pth')
+    y, moe_loss = model(x)
     print(y.shape)
-    print(moe_loss1)
+    print(moe_loss)
