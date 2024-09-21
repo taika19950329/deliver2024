@@ -1,1 +1,1 @@
-![structure of current branch](./mit.png)
+![structure of current branch](./mit_infonce.jpg)

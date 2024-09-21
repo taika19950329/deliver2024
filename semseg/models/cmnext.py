@@ -19,10 +19,10 @@ class CMNeXt(BaseModel):
 
     def forward(self, x: list) -> list:
         # print('base model cmnext forward input', x[0].shape)
-        y, moe_loss1, moe_loss2, moe_loss3, moe_loss4 = self.backbone(x)
+        y, infonce_loss = self.backbone(x)
         y = self.decode_head(y)
         y = F.interpolate(y, size=x[0].shape[2:], mode='bilinear', align_corners=False)
-        return y, moe_loss1, moe_loss2, moe_loss3, moe_loss4
+        return y, infonce_loss
 
     def init_pretrained(self, pretrained: str = None) -> None:
         if pretrained:
