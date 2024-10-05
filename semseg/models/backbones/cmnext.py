@@ -18,16 +18,16 @@ from semseg.models.modules.moe_lora import ConcatAndConv
 # import numpy as np
 # from copy import deepcopy
 #
-import torch
-import psutil
-import os
-
-# 获取当前进程的 PID
-pid = os.getpid()
-# 获取当前进程的内存信息
-process = psutil.Process(pid)
-
-import torch.optim as optim
+# import torch
+# import psutil
+# import os
+#
+# # 获取当前进程的 PID
+# pid = os.getpid()
+# # 获取当前进程的内存信息
+# process = psutil.Process(pid)
+#
+# import torch.optim as optim
 from torch.cuda.amp import autocast, GradScaler
 
 
@@ -110,10 +110,10 @@ class Attention(nn.Module):
         self.proj = nn.Linear(dim, dim)
 
         # LoRA for rgb
-        self.lora_rgb_a_q = nn.Linear(dim, 8*r, bias=False)
-        self.lora_rgb_b_q = nn.Linear(8*r, dim, bias=False)
-        self.lora_rgb_a_v = nn.Linear(dim, 8*r, bias=False)
-        self.lora_rgb_b_v = nn.Linear(8*r, dim, bias=False)
+        self.lora_rgb_a_q = nn.Linear(dim, r, bias=False)
+        self.lora_rgb_b_q = nn.Linear(r, dim, bias=False)
+        self.lora_rgb_a_v = nn.Linear(dim, r, bias=False)
+        self.lora_rgb_b_v = nn.Linear(r, dim, bias=False)
 
         self.lora_rgb_q = _LoRA_q(
             self.q,
@@ -563,12 +563,12 @@ class CMNeXt(nn.Module):
                 FFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=nn.BatchNorm2d)])
 
         # 冻结参数debug
-        for layer in [self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
-                      self.FRMs, self.FFMs,
-                      self.concat_conv1, self.concat_conv2, self.concat_conv3, self.concat_conv4,
-                      self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
-            for param in layer.parameters():
-                param.requires_grad = False
+        # for layer in [self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
+        #               self.FRMs, self.FFMs,
+        #               self.concat_conv1, self.concat_conv2, self.concat_conv3, self.concat_conv4,
+        #               self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
+        #     for param in layer.parameters():
+        #         param.requires_grad = False
 
     def tokenselect(self, x_ext, module):
         x_scores = module(x_ext)
@@ -588,20 +588,17 @@ class CMNeXt(nn.Module):
 
         # ------ stage 1 ------ #
         ## ------ rgb encoder lora process ------ ##
-        print_memory_usage("Before stage1")
+        # print_memory_usage("Before stage1")
         x_cam, H, W = self.patch_embed1(x_cam)
         for blk in self.block1:
             x_cam = blk(x_cam, H, W, 'rgb')
         x1_cam = self.norm1(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-        rgb1_feat = x1_cam.reshape(B, -1)
-        rgb1_feat = F.normalize(rgb1_feat, p=2, dim=1)
-
         del x_cam
         torch.cuda.empty_cache()
 
         if self.num_modals > 0:
-            cur_total_infonce_loss1 = 0
+            cur_total_l1_loss1 = 0
             ## ------ diff feature encoder lora process ------ ##
             for i in range(self.num_modals):
                 x_ext[i], _, _ = self.patch_embed1(x_ext[i])
@@ -616,26 +613,12 @@ class CMNeXt(nn.Module):
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm1(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-                ## ------ compute infonce loss ------ ##
-                x1_feat = x_ext[i].reshape(B, -1)
-                x1_feat = F.normalize(x1_feat, p=2, dim=1)
+                ## ------ compute l1 loss ------ ##
+                cur_loss = torch.abs(x_ext[i] - x1_cam).mean()
+                cur_total_l1_loss1 += cur_loss
+            total_infonce_loss.append(cur_total_l1_loss1 / 3.0)
 
-                losses = []
-                for j in range(B):
-                    anchor = rgb1_feat[j]  # [C*H*W]
-                    positive = x1_feat[j]  # [C*H*W]
-
-                    negatives = torch.cat([x1_feat[p].unsqueeze(0) for p in range(B) if p != j], dim=0)  # [B-1, C*H*W]
-                    negatives = negatives.unsqueeze(0).repeat(1, 1, 1)  # [1, B-1, C*H*W]
-
-                    loss = compute_infonce_loss(anchor.unsqueeze(0), positive.unsqueeze(0), negatives)
-                    losses.append(loss)
-
-                current_loss = torch.mean(torch.stack(losses))
-                cur_total_infonce_loss1 += current_loss
-            total_infonce_loss.append(cur_total_infonce_loss1/3)
-
-            del cur_total_infonce_loss1, rgb1_feat, x1_feat
+            del cur_total_l1_loss1
             torch.cuda.empty_cache()
 
             x1_f = self.concat_conv1(x_ext)
@@ -652,20 +635,17 @@ class CMNeXt(nn.Module):
 
         # ------ stage 2 ------ #
         ## ------ rgb encoder lora process ------ ##
-        print_memory_usage("Before stage2")
+        # print_memory_usage("Before stage2")
         x1_cam, H, W = self.patch_embed2(x1_cam)
         for blk in self.block2:
             x1_cam = blk(x1_cam, H, W, 'rgb')
         x2_cam = self.norm2(x1_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-        rgb2_feat = x2_cam.reshape(B, -1)
-        rgb2_feat = F.normalize(rgb2_feat, p=2, dim=1)
-
         del x1_cam
         torch.cuda.empty_cache()
 
         if self.num_modals > 0:
-            cur_total_infonce_loss2 = 0
+            cur_total_l1_loss2 = 0
             ## ------ diff feature encoder lora process ------ ##
             for i in range(self.num_modals):
                 x_ext[i], _, _ = self.patch_embed2(x_ext[i])
@@ -680,27 +660,12 @@ class CMNeXt(nn.Module):
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm2(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-                ## ------ compute infonce loss ------ ##
-                x2_feat = x_ext[i].reshape(B, -1)
-                x2_feat = F.normalize(x2_feat, p=2, dim=1)
+                ## ------ compute l1 loss ------ ##
+                cur_loss = torch.abs(x_ext[i] - x2_cam).mean()
+                cur_total_l1_loss2 += cur_loss
+            total_infonce_loss.append(cur_total_l1_loss2 / 3.0)
 
-                losses = []
-                for j in range(B):
-                    anchor = rgb2_feat[j]  # [C*H*W]
-                    positive = x2_feat[j]  # [C*H*W]
-
-                    negatives = torch.cat([x2_feat[p].unsqueeze(0) for p in range(B) if p != j],
-                                          dim=0)  # [B-1, C*H*W]
-                    negatives = negatives.unsqueeze(0).repeat(1, 1, 1)  # [1, B-1, C*H*W]
-
-                    loss = compute_infonce_loss(anchor.unsqueeze(0), positive.unsqueeze(0), negatives)
-                    losses.append(loss)
-
-                current_loss = torch.mean(torch.stack(losses))
-                cur_total_infonce_loss2 += current_loss
-            total_infonce_loss.append(cur_total_infonce_loss2 / 3)
-
-            del cur_total_infonce_loss2, x2_feat, rgb2_feat
+            del cur_total_l1_loss2
             torch.cuda.empty_cache()
 
             x2_f = self.concat_conv2(x_ext)
@@ -717,20 +682,17 @@ class CMNeXt(nn.Module):
 
         # ------ stage 3 ------ #
         ## ------ rgb encoder lora process ------ ##
-        print_memory_usage("Before stage3")
+        # print_memory_usage("Before stage3")
         x2_cam, H, W = self.patch_embed3(x2_cam)
         for blk in self.block3:
             x2_cam = blk(x2_cam, H, W, 'rgb')
         x3_cam = self.norm3(x2_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-        rgb3_feat = x3_cam.reshape(B, -1)
-        rgb3_feat = F.normalize(rgb3_feat, p=2, dim=1)
-
         del x2_cam
         torch.cuda.empty_cache()
 
         if self.num_modals > 0:
-            cur_total_infonce_loss3 = 0
+            cur_total_l1_loss3 = 0
             ## ------ diff feature encoder lora process ------ ##
             for i in range(self.num_modals):
                 x_ext[i], _, _ = self.patch_embed3(x_ext[i])
@@ -745,27 +707,12 @@ class CMNeXt(nn.Module):
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm3(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-                ## ------ compute infonce loss ------ ##
-                x3_feat = x_ext[i].reshape(B, -1)
-                x3_feat = F.normalize(x3_feat, p=2, dim=1)
+                ## ------ compute l1 loss ------ ##
+                cur_loss = torch.abs(x_ext[i] - x3_cam).mean()
+                cur_total_l1_loss3 += cur_loss
+            total_infonce_loss.append(cur_total_l1_loss3 / 3.0)
 
-                losses = []
-                for j in range(B):
-                    anchor = rgb3_feat[j]  # [C*H*W]
-                    positive = x3_feat[j]  # [C*H*W]
-
-                    negatives = torch.cat([x3_feat[p].unsqueeze(0) for p in range(B) if p != j],
-                                          dim=0)  # [B-1, C*H*W]
-                    negatives = negatives.unsqueeze(0).repeat(1, 1, 1)  # [1, B-1, C*H*W]
-
-                    loss = compute_infonce_loss(anchor.unsqueeze(0), positive.unsqueeze(0), negatives)
-                    losses.append(loss)
-
-                current_loss = torch.mean(torch.stack(losses))
-                cur_total_infonce_loss3 += current_loss
-            total_infonce_loss.append(cur_total_infonce_loss3 / 3)
-
-            del cur_total_infonce_loss3, x3_feat, rgb3_feat
+            del cur_total_l1_loss3
             torch.cuda.empty_cache()
 
             x3_f = self.concat_conv3(x_ext)
@@ -782,20 +729,17 @@ class CMNeXt(nn.Module):
 
         # ------ stage 4 ------ #
         ## ------ rgb encoder lora process ------ ##
-        print_memory_usage("Before stage4")
+        # print_memory_usage("Before stage4")
         x3_cam, H, W = self.patch_embed4(x3_cam)
         for blk in self.block4:
             x3_cam = blk(x3_cam, H, W, 'rgb')
         x4_cam = self.norm4(x3_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-        rgb4_feat = x4_cam.reshape(B, -1)
-        rgb4_feat = F.normalize(rgb4_feat, p=2, dim=1)
-
         del x3_cam
         torch.cuda.empty_cache()
 
         if self.num_modals > 0:
-            cur_total_infonce_loss4 = 0
+            cur_total_l1_loss4 = 0
             ## ------ diff feature encoder lora process ------ ##
             for i in range(self.num_modals):
                 x_ext[i], _, _ = self.patch_embed4(x_ext[i])
@@ -810,27 +754,12 @@ class CMNeXt(nn.Module):
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm4(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-                ## ------ compute infonce loss ------ ##
-                x4_feat = x_ext[i].reshape(B, -1)
-                x4_feat = F.normalize(x4_feat, p=2, dim=1)
+                ## ------ compute l1 loss ------ ##
+                cur_loss = torch.abs(x_ext[i] - x4_cam).mean()
+                cur_total_l1_loss4 += cur_loss
+            total_infonce_loss.append(cur_total_l1_loss4 / 3.0)
 
-                losses = []
-                for j in range(B):
-                    anchor = rgb4_feat[j]  # [C*H*W]
-                    positive = x4_feat[j]  # [C*H*W]
-
-                    negatives = torch.cat([x4_feat[p].unsqueeze(0) for p in range(B) if p != j],
-                                          dim=0)  # [B-1, C*H*W]
-                    negatives = negatives.unsqueeze(0).repeat(1, 1, 1)  # [1, B-1, C*H*W]
-
-                    loss = compute_infonce_loss(anchor.unsqueeze(0), positive.unsqueeze(0), negatives)
-                    losses.append(loss)
-
-                current_loss = torch.mean(torch.stack(losses))
-                cur_total_infonce_loss4 += current_loss
-            total_infonce_loss.append(cur_total_infonce_loss4 / 3)
-
-            del cur_total_infonce_loss4, x4_feat, rgb4_feat
+            del cur_total_l1_loss4
             torch.cuda.empty_cache()
 
             x4_f = self.concat_conv4(x_ext)
@@ -845,7 +774,7 @@ class CMNeXt(nn.Module):
         else:
             outs.append(x4_cam)
 
-        return outs, sum(total_infonce_loss)/4.0  ######
+        return outs, sum(total_infonce_loss) / 4.0  ######
         # return outs
 
 
@@ -867,6 +796,16 @@ def compute_infonce_loss(anchor, positive, negatives):
     positive: 正样本特征 (如 Depth 特征) [B, D]
     negatives: 负样本特征 (batch 内其他样本) [B, N-1, D], N 是 batch size
     """
+    # 检查输入是否有 NaN 或 Inf
+    # assert torch.isfinite(anchor).all(), "Anchor contains NaN or Inf"
+    # assert torch.isfinite(positive).all(), "Positive contains NaN or Inf"
+    # assert torch.isfinite(negatives).all(), "Negatives contain NaN or Inf"
+
+    # L2 归一化
+    anchor = F.normalize(anchor, p=2, dim=-1)
+    positive = F.normalize(positive, p=2, dim=-1)
+    negatives = F.normalize(negatives, p=2, dim=-1)
+
     # 计算正样本的相似度 (anchor 和正样本的点积)
     positive_sim = torch.sum(anchor * positive, dim=-1)  # [B]
 
@@ -875,6 +814,12 @@ def compute_infonce_loss(anchor, positive, negatives):
 
     # 拼接正负样本的相似度，正样本位于第 0 类
     logits = torch.cat([positive_sim.unsqueeze(1), negative_sim], dim=1)  # [B, 1 + (N-1)]
+
+    # 对 logits 进行裁剪，防止极端数值
+    logits = torch.clamp(logits, min=-50, max=50)
+
+    # 使用温度缩放
+    logits = logits / 0.07
 
     # 使用交叉熵损失，正样本对应的标签应为 0
     labels = torch.zeros(anchor.size(0), dtype=torch.long).to(anchor.device)  # [B]
@@ -910,7 +855,7 @@ def compute_infonce_loss(anchor, positive, negatives):
 
 if __name__ == '__main__':
     modals = ['rgb', 'depth', 'event', 'lidar']
-    device = torch.device('cuda')  # 使用 GPU
+    device = torch.device('cpu')  # 使用 GPU
     x = [torch.ones(2, 3, 1024, 1024).to(device),
          torch.ones(2, 3, 1024, 1024).to(device),
          (torch.ones(2, 3, 1024, 1024) * 2).to(device),

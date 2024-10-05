@@ -1,5 +1,5 @@
 import os
-import torch 
+import torch
 import argparse
 import yaml
 import time
@@ -14,7 +14,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DistributedSampler, RandomSampler
 from torch import distributed as dist
 from semseg.models import *
-from semseg.datasets import * 
+from semseg.datasets import *
 from semseg.augmentations_mm import get_train_augmentation, get_val_augmentation
 from semseg.losses import get_loss
 from semseg.schedulers import get_scheduler
@@ -52,53 +52,51 @@ def main(cfg, gpu, save_dir):
     else:
         model.init_pretrained(model_cfg['PRETRAINED'])
         # current_state_dict = model.state_dict()
-        # custom_state_dict = torch.load('/home/yi/Documents/DELIVER/checkpoints/pretrained/deliver/cmnext_b2_deliver_rgb.pth')
+        # custom_state_dict = torch.load(model_cfg['PRETRAINEDRGB'])
         # # custom_state_dict = torch.load(
         # #     '/home/yi/Documents/DELIVER/output/DELIVER_CMNeXt-B2_idel_MoE_20240803/CMNeXt_CMNeXt-B2_DELIVER_epoch115_61.81.pth')
         # for name, param in custom_state_dict.items():
-        #     if ('patch_embed' or 'block' or 'norm' in custom_state_dict.items()) and ('extra' not in custom_state_dict.items()):
+        #     if ('patch_embed' or 'block' or 'norm' in custom_state_dict.items()) and (
+        #             'extra' not in custom_state_dict.items()):
         #         # print(f"Layer: {name} | Size: {param.size()} | Requires Grad: {param.requires_grad}")
         #         current_state_dict[name] = custom_state_dict[name]
         # model.load_state_dict(current_state_dict)
 
         for name, param in model.named_parameters():
             if (('patch_embed' in name.split(".")[1]) or ('block' in name.split(".")[1]) or (
-                    'norm' in name.split(".")[1])) and ('extra' not in name.split(".")[1])\
+                    'norm' in name.split(".")[1])) and ('extra' not in name.split(".")[1]) \
                     and ('lora' not in name.split(".")[1]):
                 param.requires_grad = False
             else:
                 param.requires_grad = True
             if 'lora' in name:
                 param.requires_grad = True
-        #     print(f"Layer: {name} | Size: {param.size()} | Requires Grad: {param.requires_grad}")
-        # #     if 'depth_block1' == name.split(".")[1]:
-        # #         print(f"Layer: {name} | Size: {param.size()} | Requires Grad: {param.requires_grad}")
-        # #         print(param)
-        # raise Exception
-
+            # print(f"Layer: {name} | Size: {param.size()} | Requires Grad: {param.requires_grad}, ture count:{cccc}")
     model = model.to(device)
-    
+
     iters_per_epoch = len(trainset) // train_cfg['BATCH_SIZE'] // gpus
     loss_fn = get_loss(loss_cfg['NAME'], trainset.ignore_label, None)
     start_epoch = 0
     optimizer = get_optimizer(model, optim_cfg['NAME'], lr, optim_cfg['WEIGHT_DECAY'])
     scheduler = get_scheduler(sched_cfg['NAME'], optimizer, int((epochs+1)*iters_per_epoch), sched_cfg['POWER'], iters_per_epoch * sched_cfg['WARMUP'], sched_cfg['WARMUP_RATIO'])
+    # 定义学习率调度器，每 10 个 epoch 学习率衰减到 90%（可根据需要调整 step_size 和 gamma）
+    # scheduler = get_scheduler('steplr', optimizer, step_size=1, gamma=0.9)
 
-    if train_cfg['DDP']: 
+    if train_cfg['DDP']:
         sampler = DistributedSampler(trainset, dist.get_world_size(), dist.get_rank(), shuffle=True)
         sampler_val = None
         model = DDP(model, device_ids=[gpu], output_device=0, find_unused_parameters=True)
     else:
         sampler = RandomSampler(trainset)
         sampler_val = None
-    
+
     if resume_checkpoint:
         start_epoch = resume_checkpoint['epoch'] - 1
         optimizer.load_state_dict(resume_checkpoint['optimizer_state_dict'])
         scheduler.load_state_dict(resume_checkpoint['scheduler_state_dict'])
-        loss = resume_checkpoint['loss']        
+        loss = resume_checkpoint['loss']
         best_mIoU = resume_checkpoint['best_miou']
-           
+
     trainloader = DataLoader(trainset, batch_size=train_cfg['BATCH_SIZE'], num_workers=num_workers, drop_last=True, pin_memory=False, sampler=sampler)
     valloader = DataLoader(valset, batch_size=eval_cfg['BATCH_SIZE'], num_workers=num_workers, pin_memory=False, sampler=sampler_val)
 
@@ -120,7 +118,7 @@ def main(cfg, gpu, save_dir):
         model.train()
         if train_cfg['DDP']: sampler.set_epoch(epoch)
 
-        train_loss = 0.0        
+        train_loss = 0.0
         lr = scheduler.get_lr()
         lr = sum(lr) / len(lr)
         pbar = tqdm(enumerate(trainloader), total=iters_per_epoch, desc=f"Epoch: [{epoch+1}/{epochs}] Iter: [{0}/{iters_per_epoch}] LR: {lr:.8f} Loss: {train_loss:.8f}")
@@ -129,12 +127,27 @@ def main(cfg, gpu, save_dir):
             optimizer.zero_grad(set_to_none=True)
             sample = [x.to(device) for x in sample]
             lbl = lbl.to(device)
-            
+
             with autocast(enabled=train_cfg['AMP']):
-                logits, moe_loss1, moe_loss2, moe_loss3, moe_loss4 = model(sample)   #######
-                loss = loss_fn(logits, lbl) + 0.25*moe_loss1 + 0.25*moe_loss2 + 0.25*moe_loss3 + 0.25*moe_loss4
+                logits, infonce_loss = model(sample)   #######
+                loss = loss_fn(logits, lbl) + 0.2 * infonce_loss
+
+            # # 检查 loss 是否是 NaN
+            # if torch.isnan(loss):
+            #     print(f"Warning: NaN loss detected at epoch {epoch+1}, iter {iter+1}. Skipping this batch.")
+            #     loss.detach()  # 释放计算图
+            #     del infonce_loss, loss
+            #     del logits
+            #     del sample, lbl
+            #     optimizer.zero_grad()  # 清理梯度
+            #     torch.cuda.empty_cache()  # 手动释放显存
+            #     continue  # 跳过当前批次
 
             scaler.scale(loss).backward()
+
+            # === 添加梯度裁剪 ===
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
             scaler.step(optimizer)
             scaler.update()
             scheduler.step()
@@ -147,15 +160,17 @@ def main(cfg, gpu, save_dir):
             train_loss += loss.item()
 
             pbar.set_description(f"Epoch: [{epoch+1}/{epochs}] Iter: [{iter+1}/{iters_per_epoch}] LR: {lr:.8f} Loss: {train_loss / (iter+1):.8f}")
-        
+
         train_loss /= iter+1
+        # scheduler.step()  # 每个 epoch 结束后，更新学习率
+
         if (train_cfg['DDP'] and torch.distributed.get_rank() == 0) or (not train_cfg['DDP']):
             writer.add_scalar('train/loss', train_loss, epoch)
         torch.cuda.empty_cache()
 
         if ((epoch+1) % train_cfg['EVAL_INTERVAL'] == 0 and (epoch+1)>train_cfg['EVAL_START']) or (epoch+1) == epochs:
             if (train_cfg['DDP'] and torch.distributed.get_rank() == 0) or (not train_cfg['DDP']):
-                acc, macc, _, _, ious, miou = evaluate(model, valloader, device, isTrain=False)
+                acc, macc, _, _, ious, miou = evaluate(model, valloader, device)
                 writer.add_scalar('val/mIoU', miou, epoch)
 
                 if miou > best_mIoU:
@@ -168,7 +183,7 @@ def main(cfg, gpu, save_dir):
                     cur_best_ckp = save_dir / f"{model_cfg['NAME']}_{model_cfg['BACKBONE']}_{dataset_cfg['NAME']}_epoch{best_epoch}_{best_mIoU}_checkpoint.pth"
                     cur_best = save_dir / f"{model_cfg['NAME']}_{model_cfg['BACKBONE']}_{dataset_cfg['NAME']}_epoch{best_epoch}_{best_mIoU}.pth"
                     torch.save(model.module.state_dict() if train_cfg['DDP'] else model.state_dict(), cur_best)
-                    # --- 
+                    # ---
                     torch.save({'epoch': best_epoch,
                                 'model_state_dict': model.module.state_dict() if train_cfg['DDP'] else model.state_dict(),
                                 'optimizer_state_dict': optimizer.state_dict(),
@@ -204,10 +219,10 @@ if __name__ == '__main__':
     gpu = setup_ddp()
     modals = ''.join([m[0] for m in cfg['DATASET']['MODALS']])
     model = cfg['MODEL']['BACKBONE']
-    exp_name = '_'.join([cfg['DATASET']['NAME'], model, modals, 'MoE', '20240909'])
+    exp_name = '_'.join([cfg['DATASET']['NAME'], model, modals, 'mit-lora-l1-h100', '20240929'])
     save_dir = Path(cfg['SAVE_DIR'], exp_name)
     if os.path.isfile(cfg['MODEL']['RESUME']):
-        save_dir =  Path(os.path.dirname(cfg['MODEL']['RESUME']))
+        save_dir = Path(os.path.dirname(cfg['MODEL']['RESUME']))
     os.makedirs(save_dir, exist_ok=True)
     logger = get_logger(save_dir / 'train.log')
     main(cfg, gpu, save_dir)
