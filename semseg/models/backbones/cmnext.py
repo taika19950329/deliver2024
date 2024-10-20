@@ -394,7 +394,7 @@ class Block(nn.Module):
     def __init__(self, dim, head, sr_ratio=1, dpr=0., is_fan=False):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim)
-        self.attn = Attention(dim, head, sr_ratio, 4, 0.5)
+        self.attn = Attention(dim, head, sr_ratio, 8, 0.5)
         self.drop_path = DropPath(dpr) if dpr > 0. else nn.Identity()
         self.norm2 = nn.LayerNorm(dim)
         self.mlp = MLP(dim, int(dim*4), 4) if not is_fan else ChannelProcessing(dim, mlp_hidden_dim=int(dim*4))
@@ -528,10 +528,10 @@ class CMNeXt(nn.Module):
         self.concat_conv3 = ConcatAndConv(3 * embed_dims[2], embed_dims[2])
         self.concat_conv4 = ConcatAndConv(3 * embed_dims[3], embed_dims[3])
 
-        # self.mam_concat_conv1 = ConcatAndConv(2 * embed_dims[0], embed_dims[0])  ######
-        # self.mam_concat_conv2 = ConcatAndConv(2 * embed_dims[1], embed_dims[1])
-        # self.mam_concat_conv3 = ConcatAndConv(2 * embed_dims[2], embed_dims[2])
-        # self.mam_concat_conv4 = ConcatAndConv(2 * embed_dims[3], embed_dims[3])
+        self.mam_concat_conv1 = ConcatAndConv(2 * embed_dims[0], embed_dims[0])  ######
+        self.mam_concat_conv2 = ConcatAndConv(2 * embed_dims[1], embed_dims[1])
+        self.mam_concat_conv3 = ConcatAndConv(2 * embed_dims[2], embed_dims[2])
+        self.mam_concat_conv4 = ConcatAndConv(2 * embed_dims[3], embed_dims[3])
 
         # self.final_conv1 = FinalConvProcessor(embed_dims[0], embed_dims[0])
         # self.final_conv2 = FinalConvProcessor(embed_dims[1], embed_dims[1])
@@ -633,8 +633,8 @@ class CMNeXt(nn.Module):
             x1_f = self.concat_conv1(x_ext)
 
             ## ------ rgb & X_share fusion ------ ##
-            x1_cam, x1_f = self.FRMs[0](x1_cam, x1_f)
-            x_fused = self.FFMs[0](x1_cam, x1_f)
+            x1_cammed, x1_f = self.FRMs[0](x1_cam, x1_f)
+            x_fused = self.FFMs[0](x1_cammed, x1_f)
             outs.append(x_fused)
 
             ## ------ magic ------ ##
@@ -656,19 +656,19 @@ class CMNeXt(nn.Module):
             f_rm1 = get_selected_features(B, indices[:, 1], x1_cam, x_ext[0], x_ext[1], x_ext[2])
             f_rm2 = get_selected_features(B, indices[:, 2], x1_cam, x_ext[0], x_ext[1], x_ext[2])
 
-            f_sa = (f_rf + f_fm) / 2.0
+            f_sa = self.mam_concat_conv1([f_rf, f_fm])
             # 剪裁
             f_sa = check_nan_inf(f_sa, "f_sa")
             f_rm1 = check_nan_inf(f_rm1, "f_rm1")
             f_rm2 = check_nan_inf(f_rm2, "f_rm2")
             # 语义一致性训练
-            # 计算剩余特征与 f_sa 的相似性
-            sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
-            sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
+            # 计算剩余特征与 f_sa 的余弦相似性
+            c1 = cosine_similarity(f_rm1, f_sa)
+            c2 = cosine_similarity(f_rm2, f_sa)
 
-            loss_c1 = (sim_rm1 + sim_rm2) / 2.0
+            loss_c1 = torch.sum(c1 * torch.log(c1 / (0.5 * (c1 + c2 + 1e-6))) + c2 * torch.log(c2 / (0.5 * (c1 + c2 + 1e-6)))).mean()
 
-            del x_fused, x1_f, f_sa, f_rf, f_fm, f_rm1, f_rm2
+            del x_fused, x1_f, x1_cammed, f_sa, f_rf, f_fm, f_rm1, f_rm2
             torch.cuda.empty_cache()
         else:
             outs.append(x1_cam)
@@ -702,8 +702,8 @@ class CMNeXt(nn.Module):
             x2_f = self.concat_conv2(x_ext)
 
             ## ------ rgb & X_share fusion ------ ##
-            x2_cam, x2_f = self.FRMs[1](x2_cam, x2_f)
-            x_fused = self.FFMs[1](x2_cam, x2_f)
+            x2_cammed, x2_f = self.FRMs[1](x2_cam, x2_f)
+            x_fused = self.FFMs[1](x2_cammed, x2_f)
 
             outs.append(x_fused)
 
@@ -724,21 +724,20 @@ class CMNeXt(nn.Module):
             f_rm1 = get_selected_features(B, indices[:, 1], x2_cam, x_ext[0], x_ext[1], x_ext[2])
             f_rm2 = get_selected_features(B, indices[:, 2], x2_cam, x_ext[0], x_ext[1], x_ext[2])
 
-            # mam
-            f_sa = (f_rf + f_fm) / 2.0
-
+            f_sa = self.mam_concat_conv2([f_rf, f_fm])
             # 剪裁
             f_sa = check_nan_inf(f_sa, "f_sa")
             f_rm1 = check_nan_inf(f_rm1, "f_rm1")
             f_rm2 = check_nan_inf(f_rm2, "f_rm2")
             # 语义一致性训练
-            # 计算剩余特征与 f_sa 的相似性
-            sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
-            sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
+            # 计算剩余特征与 f_sa 的余弦相似性
+            c1 = cosine_similarity(f_rm1, f_sa)
+            c2 = cosine_similarity(f_rm2, f_sa)
 
-            loss_c2 = (sim_rm1 + sim_rm2) / 2.0
+            loss_c2 = torch.sum(
+                c1 * torch.log(c1 / (0.5 * (c1 + c2 + 1e-6))) + c2 * torch.log(c2 / (0.5 * (c1 + c2 + 1e-6)))).mean()
 
-            del x_fused, x2_f, f_sa, f_rf, f_fm, f_rm1, f_rm2
+            del x_fused, x2_f, x2_cammed, f_sa, f_rf, f_fm, f_rm1, f_rm2
             torch.cuda.empty_cache()
         else:
             outs.append(x2_cam)
@@ -772,8 +771,8 @@ class CMNeXt(nn.Module):
             x3_f = self.concat_conv3(x_ext)
 
             ## ------ rgb & X_share fusion ------ ##
-            x3_cam, x3_f = self.FRMs[2](x3_cam, x3_f)
-            x_fused = self.FFMs[2](x3_cam, x3_f)
+            x3_cammed, x3_f = self.FRMs[2](x3_cam, x3_f)
+            x_fused = self.FFMs[2](x3_cammed, x3_f)
             outs.append(x_fused)
 
             ## ------ magic ------ ##
@@ -793,20 +792,20 @@ class CMNeXt(nn.Module):
             f_rm1 = get_selected_features(B, indices[:, 1], x3_cam, x_ext[0], x_ext[1], x_ext[2])
             f_rm2 = get_selected_features(B, indices[:, 2], x3_cam, x_ext[0], x_ext[1], x_ext[2])
 
-            f_sa = (f_rf + f_fm) / 2.0
-
+            f_sa = self.mam_concat_conv3([f_rf, f_fm])
             # 剪裁
             f_sa = check_nan_inf(f_sa, "f_sa")
             f_rm1 = check_nan_inf(f_rm1, "f_rm1")
             f_rm2 = check_nan_inf(f_rm2, "f_rm2")
             # 语义一致性训练
-            # 计算剩余特征与 f_sa 的相似性
-            sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
-            sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
+            # 计算剩余特征与 f_sa 的余弦相似性
+            c1 = cosine_similarity(f_rm1, f_sa)
+            c2 = cosine_similarity(f_rm2, f_sa)
 
-            loss_c3 = (sim_rm1 + sim_rm2) / 2.0
+            loss_c3 = torch.sum(
+                c1 * torch.log(c1 / (0.5 * (c1 + c2 + 1e-6))) + c2 * torch.log(c2 / (0.5 * (c1 + c2 + 1e-6)))).mean()
 
-            del x_fused, x3_f, f_sa, f_rf, f_fm, f_rm1, f_rm2
+            del x_fused, x3_f, x3_cammed, f_sa, f_rf, f_fm, f_rm1, f_rm2
             torch.cuda.empty_cache()
         else:
             outs.append(x3_cam)
@@ -840,8 +839,8 @@ class CMNeXt(nn.Module):
             x4_f = self.concat_conv4(x_ext)
 
             ## ------ rgb & X_share fusion ------ ##
-            x4_cam, x4_f = self.FRMs[3](x4_cam, x4_f)
-            x_fused = self.FFMs[3](x4_cam, x4_f)
+            x4_cammed, x4_f = self.FRMs[3](x4_cam, x4_f)
+            x_fused = self.FFMs[3](x4_cammed, x4_f)
             outs.append(x_fused)
 
             ## ------ magic ------ ##
@@ -861,20 +860,20 @@ class CMNeXt(nn.Module):
             f_rm1 = get_selected_features(B, indices[:, 1], x4_cam, x_ext[0], x_ext[1], x_ext[2])
             f_rm2 = get_selected_features(B, indices[:, 2], x4_cam, x_ext[0], x_ext[1], x_ext[2])
 
-            f_sa = (f_rf + f_fm) / 2.0
-
+            f_sa = self.mam_concat_conv4([f_rf, f_fm])
             # 剪裁
             f_sa = check_nan_inf(f_sa, "f_sa")
             f_rm1 = check_nan_inf(f_rm1, "f_rm1")
             f_rm2 = check_nan_inf(f_rm2, "f_rm2")
             # 语义一致性训练
-            # 计算剩余特征与 f_sa 的相似性
-            sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
-            sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
+            # 计算剩余特征与 f_sa 的余弦相似性
+            c1 = cosine_similarity(f_rm1, f_sa)
+            c2 = cosine_similarity(f_rm2, f_sa)
 
-            loss_c4 = (sim_rm1 + sim_rm2) / 2.0
+            loss_c4 = torch.sum(
+                c1 * torch.log(c1 / (0.5 * (c1 + c2 + 1e-6))) + c2 * torch.log(c2 / (0.5 * (c1 + c2 + 1e-6)))).mean()
 
-            del x_fused, x4_f, f_sa, f_rf, f_fm, f_rm1, f_rm2
+            del x_fused, x4_f, x4_cammed, f_sa, f_rf, f_fm, f_rm1, f_rm2
             torch.cuda.empty_cache()
         else:
             outs.append(x4_cam)
