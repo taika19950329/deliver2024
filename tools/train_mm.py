@@ -63,8 +63,7 @@ def main(cfg, gpu, save_dir):
         # model.load_state_dict(current_state_dict)
 
         for name, param in model.named_parameters():
-            if (('patch_embed' in name.split(".")[1]) or ('block' in name.split(".")[1]) or (
-                    'norm' in name.split(".")[1])) and ('extra' not in name.split(".")[1]) \
+            if (('patch_embed' in name.split(".")[1]) or ('block' in name.split(".")[1])) and ('extra' not in name.split(".")[1]) \
                     and ('lora' not in name.split(".")[1]):
                 param.requires_grad = False
             else:
@@ -129,8 +128,8 @@ def main(cfg, gpu, save_dir):
             lbl = lbl.to(device)
 
             with autocast(enabled=train_cfg['AMP']):
-                logits, infonce_loss = model(sample)   #######
-                loss = loss_fn(logits, lbl) + 0.2 * infonce_loss
+                logits, cons_loss1, cons_loss2, cons_loss3, cons_loss4 = model(sample)   #######
+                loss = loss_fn(logits, lbl) + cons_loss1 + cons_loss2 + cons_loss3 + cons_loss4
 
             # # 检查 loss 是否是 NaN
             # if torch.isnan(loss):
@@ -146,7 +145,12 @@ def main(cfg, gpu, save_dir):
             scaler.scale(loss).backward()
 
             # === 添加梯度裁剪 ===
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            if 0 <= epoch <= 50:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            elif 50 < epoch <= 100:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+            else:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.3)
 
             scaler.step(optimizer)
             scaler.update()
@@ -219,7 +223,7 @@ if __name__ == '__main__':
     gpu = setup_ddp()
     modals = ''.join([m[0] for m in cfg['DATASET']['MODALS']])
     model = cfg['MODEL']['BACKBONE']
-    exp_name = '_'.join([cfg['DATASET']['NAME'], model, modals, 'mit-lora-l1-h100', '20240929'])
+    exp_name = '_'.join([cfg['DATASET']['NAME'], model, modals, 'mit-lora-con-h100', '20241018'])
     save_dir = Path(cfg['SAVE_DIR'], exp_name)
     if os.path.isfile(cfg['MODEL']['RESUME']):
         save_dir = Path(os.path.dirname(cfg['MODEL']['RESUME']))

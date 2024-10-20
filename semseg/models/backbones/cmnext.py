@@ -64,21 +64,21 @@ from torch.cuda.amp import autocast, GradScaler
 #         return x
 
 class _LoRA_q(nn.Module):
-    def __init__(self, q: nn.Module, linear_a_q: nn.Module, linear_b_q: nn.Module):
+    def __init__(self, q: nn.Module, linear_a_q: nn.Module, linear_b_q: nn.Module, alpha: float = 1.0):
         super().__init__()
         self.q = q
         self.linear_a_q = linear_a_q
         self.linear_b_q = linear_b_q
         self.dim = q.in_features
+        self.alpha = alpha  # 加入缩放因子
 
     def forward(self, x):
         q = self.q(x)
         new_q = self.linear_b_q(self.linear_a_q(x))
-        return q + new_q
-
+        return q + self.alpha * new_q  # 乘以缩放因子
 
 class _LoRA_kv(nn.Module):
-    def __init__(self, kv: nn.Module, linear_a_k: nn.Module, linear_b_k: nn.Module, linear_a_v: nn.Module, linear_b_v: nn.Module):
+    def __init__(self, kv: nn.Module, linear_a_k: nn.Module, linear_b_k: nn.Module, linear_a_v: nn.Module, linear_b_v: nn.Module, alpha: float = 1.0):
         super().__init__()
         self.kv = kv
         self.linear_a_k = linear_a_k
@@ -86,23 +86,24 @@ class _LoRA_kv(nn.Module):
         self.linear_a_v = linear_a_v
         self.linear_b_v = linear_b_v
         self.dim = kv.in_features
+        self.alpha = alpha  # 加入缩放因子
 
     def forward(self, x):
         kv = self.kv(x)
         k, v = kv.chunk(2, dim=-1)
         new_k = self.linear_b_k(self.linear_a_k(x))
         new_v = self.linear_b_v(self.linear_a_v(x))
-        k = k + new_k
-        v = v + new_v
+        k = k + self.alpha * new_k  # 乘以缩放因子
+        v = v + self.alpha * new_v  # 乘以缩放因子
         return torch.cat((k, v), dim=-1)
 
-
 class Attention(nn.Module):
-    def __init__(self, dim, head, sr_ratio, r):
+    def __init__(self, dim, head, sr_ratio, r, alpha=1.0):
         super().__init__()
         self.head = head
         self.sr_ratio = sr_ratio
         self.scale = (dim // head) ** -0.5
+        self.alpha = alpha  # 缩放因子
 
         # Original Q and KV linear layers
         self.q = nn.Linear(dim, dim)
@@ -118,14 +119,16 @@ class Attention(nn.Module):
         self.lora_rgb_q = _LoRA_q(
             self.q,
             self.lora_rgb_a_q,
-            self.lora_rgb_b_q
+            self.lora_rgb_b_q,
+            self.alpha  # 使用缩放因子
         )
         self.lora_rgb_kv = _LoRA_kv(
             self.kv,
             self.lora_rgb_a_v,
             self.lora_rgb_b_v,
             self.lora_rgb_a_v,  # Reusing the same for k and v
-            self.lora_rgb_b_v
+            self.lora_rgb_b_v,
+            self.alpha  # 使用缩放因子
         )
 
         # LoRA for depth
@@ -137,14 +140,16 @@ class Attention(nn.Module):
         self.lora_depth_q = _LoRA_q(
             self.q,
             self.lora_depth_a_q,
-            self.lora_depth_b_q
+            self.lora_depth_b_q,
+            self.alpha
         )
         self.lora_depth_kv = _LoRA_kv(
             self.kv,
             self.lora_depth_a_v,
             self.lora_depth_b_v,
             self.lora_depth_a_v,  # Reusing the same for k and v
-            self.lora_depth_b_v
+            self.lora_depth_b_v,
+            self.alpha
         )
 
         # LoRA for event
@@ -156,14 +161,16 @@ class Attention(nn.Module):
         self.lora_event_q = _LoRA_q(
             self.q,
             self.lora_event_a_q,
-            self.lora_event_b_q
+            self.lora_event_b_q,
+            self.alpha
         )
         self.lora_event_kv = _LoRA_kv(
             self.kv,
             self.lora_event_a_v,
             self.lora_event_b_v,
             self.lora_event_a_v,  # Reusing the same for k and v
-            self.lora_event_b_v
+            self.lora_event_b_v,
+            self.alpha
         )
 
         # LoRA for lidar
@@ -175,14 +182,16 @@ class Attention(nn.Module):
         self.lora_lidar_q = _LoRA_q(
             self.q,
             self.lora_lidar_a_q,
-            self.lora_lidar_b_q
+            self.lora_lidar_b_q,
+            self.alpha
         )
         self.lora_lidar_kv = _LoRA_kv(
             self.kv,
             self.lora_lidar_a_v,
             self.lora_lidar_b_v,
             self.lora_lidar_a_v,  # Reusing the same for k and v
-            self.lora_lidar_b_v
+            self.lora_lidar_b_v,
+            self.alpha
         )
 
         # LoRA for share
@@ -194,14 +203,16 @@ class Attention(nn.Module):
         self.lora_share_q = _LoRA_q(
             self.q,
             self.lora_share_a_q,
-            self.lora_share_b_q
+            self.lora_share_b_q,
+            self.alpha
         )
         self.lora_share_kv = _LoRA_kv(
             self.kv,
             self.lora_share_a_v,
             self.lora_share_b_v,
             self.lora_share_a_v,  # Reusing the same for k and v
-            self.lora_share_b_v
+            self.lora_share_b_v,
+            self.alpha
         )
 
         if sr_ratio > 1:
@@ -248,6 +259,7 @@ class Attention(nn.Module):
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         return x
+
 
 
 class DWConv(nn.Module):
@@ -382,7 +394,7 @@ class Block(nn.Module):
     def __init__(self, dim, head, sr_ratio=1, dpr=0., is_fan=False):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim)
-        self.attn = Attention(dim, head, sr_ratio, 4)
+        self.attn = Attention(dim, head, sr_ratio, 4, 0.5)
         self.drop_path = DropPath(dpr) if dpr > 0. else nn.Identity()
         self.norm2 = nn.LayerNorm(dim)
         self.mlp = MLP(dim, int(dim*4), 4) if not is_fan else ChannelProcessing(dim, mlp_hidden_dim=int(dim*4))
@@ -516,6 +528,11 @@ class CMNeXt(nn.Module):
         self.concat_conv3 = ConcatAndConv(3 * embed_dims[2], embed_dims[2])
         self.concat_conv4 = ConcatAndConv(3 * embed_dims[3], embed_dims[3])
 
+        # self.mam_concat_conv1 = ConcatAndConv(2 * embed_dims[0], embed_dims[0])  ######
+        # self.mam_concat_conv2 = ConcatAndConv(2 * embed_dims[1], embed_dims[1])
+        # self.mam_concat_conv3 = ConcatAndConv(2 * embed_dims[2], embed_dims[2])
+        # self.mam_concat_conv4 = ConcatAndConv(2 * embed_dims[3], embed_dims[3])
+
         # self.final_conv1 = FinalConvProcessor(embed_dims[0], embed_dims[0])
         # self.final_conv2 = FinalConvProcessor(embed_dims[1], embed_dims[1])
         # self.final_conv3 = FinalConvProcessor(embed_dims[2], embed_dims[2])
@@ -566,6 +583,7 @@ class CMNeXt(nn.Module):
         # for layer in [self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
         #               self.FRMs, self.FFMs,
         #               self.concat_conv1, self.concat_conv2, self.concat_conv3, self.concat_conv4,
+        #               self.mam_concat_conv1, self.mam_concat_conv2, self.mam_concat_conv3, self.mam_concat_conv4,
         #               self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
         #     for param in layer.parameters():
         #         param.requires_grad = False
@@ -598,7 +616,6 @@ class CMNeXt(nn.Module):
         torch.cuda.empty_cache()
 
         if self.num_modals > 0:
-            cur_total_l1_loss1 = 0
             ## ------ diff feature encoder lora process ------ ##
             for i in range(self.num_modals):
                 x_ext[i], _, _ = self.patch_embed1(x_ext[i])
@@ -613,14 +630,6 @@ class CMNeXt(nn.Module):
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm1(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-                ## ------ compute l1 loss ------ ##
-                cur_loss = torch.abs(x_ext[i] - x1_cam).mean()
-                cur_total_l1_loss1 += cur_loss
-            total_infonce_loss.append(cur_total_l1_loss1 / 3.0)
-
-            del cur_total_l1_loss1
-            torch.cuda.empty_cache()
-
             x1_f = self.concat_conv1(x_ext)
 
             ## ------ rgb & X_share fusion ------ ##
@@ -628,7 +637,38 @@ class CMNeXt(nn.Module):
             x_fused = self.FFMs[0](x1_cam, x1_f)
             outs.append(x_fused)
 
-            del x_fused, x1_f
+            ## ------ magic ------ ##
+            # 计算各个模态特征与x_fused的相似性
+            sim_r = cosine_similarity(x1_cam, x_fused)
+            sim_d = cosine_similarity(x_ext[0], x_fused)
+            sim_e = cosine_similarity(x_ext[1], x_fused)
+            sim_l = cosine_similarity(x_ext[2], x_fused)
+
+            # print(sim_r, sim_d, sim_e, sim_l)
+
+            # 将相似性放入一个张量中，然后进行排序
+            similarities = torch.stack([sim_r, sim_d, sim_e, sim_l], dim=1)  # [B, 4]
+            ranked_similarities, indices = similarities.sort(dim=1, descending=True)
+
+            # 获取最强(robust) 和 最弱 (fragile) 的特征
+            f_rf = get_selected_features(B, indices[:, 0], x1_cam, x_ext[0], x_ext[1], x_ext[2])  # 最强特征
+            f_fm = get_selected_features(B, indices[:, -1], x1_cam, x_ext[0], x_ext[1], x_ext[2])  # 最弱特征
+            f_rm1 = get_selected_features(B, indices[:, 1], x1_cam, x_ext[0], x_ext[1], x_ext[2])
+            f_rm2 = get_selected_features(B, indices[:, 2], x1_cam, x_ext[0], x_ext[1], x_ext[2])
+
+            f_sa = (f_rf + f_fm) / 2.0
+            # 剪裁
+            f_sa = check_nan_inf(f_sa, "f_sa")
+            f_rm1 = check_nan_inf(f_rm1, "f_rm1")
+            f_rm2 = check_nan_inf(f_rm2, "f_rm2")
+            # 语义一致性训练
+            # 计算剩余特征与 f_sa 的相似性
+            sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
+            sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
+
+            loss_c1 = (sim_rm1 + sim_rm2) / 2.0
+
+            del x_fused, x1_f, f_sa, f_rf, f_fm, f_rm1, f_rm2
             torch.cuda.empty_cache()
         else:
             outs.append(x1_cam)
@@ -645,7 +685,6 @@ class CMNeXt(nn.Module):
         torch.cuda.empty_cache()
 
         if self.num_modals > 0:
-            cur_total_l1_loss2 = 0
             ## ------ diff feature encoder lora process ------ ##
             for i in range(self.num_modals):
                 x_ext[i], _, _ = self.patch_embed2(x_ext[i])
@@ -660,22 +699,46 @@ class CMNeXt(nn.Module):
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm2(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-                ## ------ compute l1 loss ------ ##
-                cur_loss = torch.abs(x_ext[i] - x2_cam).mean()
-                cur_total_l1_loss2 += cur_loss
-            total_infonce_loss.append(cur_total_l1_loss2 / 3.0)
-
-            del cur_total_l1_loss2
-            torch.cuda.empty_cache()
-
             x2_f = self.concat_conv2(x_ext)
 
             ## ------ rgb & X_share fusion ------ ##
             x2_cam, x2_f = self.FRMs[1](x2_cam, x2_f)
             x_fused = self.FFMs[1](x2_cam, x2_f)
+
             outs.append(x_fused)
 
-            del x_fused, x2_f
+            ## ------ magic ------ ##
+            # 计算各个模态特征与x_fused的相似性
+            sim_r = cosine_similarity(x2_cam, x_fused)
+            sim_d = cosine_similarity(x_ext[0], x_fused)
+            sim_e = cosine_similarity(x_ext[1], x_fused)
+            sim_l = cosine_similarity(x_ext[2], x_fused)
+
+            # 将相似性放入一个张量中，然后进行排序
+            similarities = torch.stack([sim_r, sim_d, sim_e, sim_l], dim=1)  # [B, 4]
+            ranked_similarities, indices = similarities.sort(dim=1, descending=True)
+
+            # 获取最强(robust) 和 最弱 (fragile) 的特征
+            f_rf = get_selected_features(B, indices[:, 0], x2_cam, x_ext[0], x_ext[1], x_ext[2])  # 最强特征
+            f_fm = get_selected_features(B, indices[:, -1], x2_cam, x_ext[0], x_ext[1], x_ext[2])  # 最弱特征
+            f_rm1 = get_selected_features(B, indices[:, 1], x2_cam, x_ext[0], x_ext[1], x_ext[2])
+            f_rm2 = get_selected_features(B, indices[:, 2], x2_cam, x_ext[0], x_ext[1], x_ext[2])
+
+            # mam
+            f_sa = (f_rf + f_fm) / 2.0
+
+            # 剪裁
+            f_sa = check_nan_inf(f_sa, "f_sa")
+            f_rm1 = check_nan_inf(f_rm1, "f_rm1")
+            f_rm2 = check_nan_inf(f_rm2, "f_rm2")
+            # 语义一致性训练
+            # 计算剩余特征与 f_sa 的相似性
+            sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
+            sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
+
+            loss_c2 = (sim_rm1 + sim_rm2) / 2.0
+
+            del x_fused, x2_f, f_sa, f_rf, f_fm, f_rm1, f_rm2
             torch.cuda.empty_cache()
         else:
             outs.append(x2_cam)
@@ -692,7 +755,6 @@ class CMNeXt(nn.Module):
         torch.cuda.empty_cache()
 
         if self.num_modals > 0:
-            cur_total_l1_loss3 = 0
             ## ------ diff feature encoder lora process ------ ##
             for i in range(self.num_modals):
                 x_ext[i], _, _ = self.patch_embed3(x_ext[i])
@@ -707,14 +769,6 @@ class CMNeXt(nn.Module):
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm3(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-                ## ------ compute l1 loss ------ ##
-                cur_loss = torch.abs(x_ext[i] - x3_cam).mean()
-                cur_total_l1_loss3 += cur_loss
-            total_infonce_loss.append(cur_total_l1_loss3 / 3.0)
-
-            del cur_total_l1_loss3
-            torch.cuda.empty_cache()
-
             x3_f = self.concat_conv3(x_ext)
 
             ## ------ rgb & X_share fusion ------ ##
@@ -722,7 +776,37 @@ class CMNeXt(nn.Module):
             x_fused = self.FFMs[2](x3_cam, x3_f)
             outs.append(x_fused)
 
-            del x_fused, x3_f
+            ## ------ magic ------ ##
+            # 计算各个模态特征与x_fused的相似性
+            sim_r = cosine_similarity(x3_cam, x_fused)
+            sim_d = cosine_similarity(x_ext[0], x_fused)
+            sim_e = cosine_similarity(x_ext[1], x_fused)
+            sim_l = cosine_similarity(x_ext[2], x_fused)
+
+            # 将相似性放入一个张量中，然后进行排序
+            similarities = torch.stack([sim_r, sim_d, sim_e, sim_l], dim=1)  # [B, 4]
+            ranked_similarities, indices = similarities.sort(dim=1, descending=True)
+
+            # 获取最强(robust) 和 最弱 (fragile) 的特征
+            f_rf = get_selected_features(B, indices[:, 0], x3_cam, x_ext[0], x_ext[1], x_ext[2])  # 最强特征
+            f_fm = get_selected_features(B, indices[:, -1], x3_cam, x_ext[0], x_ext[1], x_ext[2])  # 最弱特征
+            f_rm1 = get_selected_features(B, indices[:, 1], x3_cam, x_ext[0], x_ext[1], x_ext[2])
+            f_rm2 = get_selected_features(B, indices[:, 2], x3_cam, x_ext[0], x_ext[1], x_ext[2])
+
+            f_sa = (f_rf + f_fm) / 2.0
+
+            # 剪裁
+            f_sa = check_nan_inf(f_sa, "f_sa")
+            f_rm1 = check_nan_inf(f_rm1, "f_rm1")
+            f_rm2 = check_nan_inf(f_rm2, "f_rm2")
+            # 语义一致性训练
+            # 计算剩余特征与 f_sa 的相似性
+            sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
+            sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
+
+            loss_c3 = (sim_rm1 + sim_rm2) / 2.0
+
+            del x_fused, x3_f, f_sa, f_rf, f_fm, f_rm1, f_rm2
             torch.cuda.empty_cache()
         else:
             outs.append(x3_cam)
@@ -739,7 +823,6 @@ class CMNeXt(nn.Module):
         torch.cuda.empty_cache()
 
         if self.num_modals > 0:
-            cur_total_l1_loss4 = 0
             ## ------ diff feature encoder lora process ------ ##
             for i in range(self.num_modals):
                 x_ext[i], _, _ = self.patch_embed4(x_ext[i])
@@ -754,14 +837,6 @@ class CMNeXt(nn.Module):
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm4(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-                ## ------ compute l1 loss ------ ##
-                cur_loss = torch.abs(x_ext[i] - x4_cam).mean()
-                cur_total_l1_loss4 += cur_loss
-            total_infonce_loss.append(cur_total_l1_loss4 / 3.0)
-
-            del cur_total_l1_loss4
-            torch.cuda.empty_cache()
-
             x4_f = self.concat_conv4(x_ext)
 
             ## ------ rgb & X_share fusion ------ ##
@@ -769,12 +844,42 @@ class CMNeXt(nn.Module):
             x_fused = self.FFMs[3](x4_cam, x4_f)
             outs.append(x_fused)
 
-            del x_fused, x4_f
+            ## ------ magic ------ ##
+            # 计算各个模态特征与x_fused的相似性
+            sim_r = cosine_similarity(x4_cam, x_fused)
+            sim_d = cosine_similarity(x_ext[0], x_fused)
+            sim_e = cosine_similarity(x_ext[1], x_fused)
+            sim_l = cosine_similarity(x_ext[2], x_fused)
+
+            # 将相似性放入一个张量中，然后进行排序
+            similarities = torch.stack([sim_r, sim_d, sim_e, sim_l], dim=1)  # [B, 4]
+            ranked_similarities, indices = similarities.sort(dim=1, descending=True)
+
+            # 获取最强(robust) 和 最弱 (fragile) 的特征
+            f_rf = get_selected_features(B, indices[:, 0], x4_cam, x_ext[0], x_ext[1], x_ext[2])  # 最强特征
+            f_fm = get_selected_features(B, indices[:, -1], x4_cam, x_ext[0], x_ext[1], x_ext[2])  # 最弱特征
+            f_rm1 = get_selected_features(B, indices[:, 1], x4_cam, x_ext[0], x_ext[1], x_ext[2])
+            f_rm2 = get_selected_features(B, indices[:, 2], x4_cam, x_ext[0], x_ext[1], x_ext[2])
+
+            f_sa = (f_rf + f_fm) / 2.0
+
+            # 剪裁
+            f_sa = check_nan_inf(f_sa, "f_sa")
+            f_rm1 = check_nan_inf(f_rm1, "f_rm1")
+            f_rm2 = check_nan_inf(f_rm2, "f_rm2")
+            # 语义一致性训练
+            # 计算剩余特征与 f_sa 的相似性
+            sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
+            sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
+
+            loss_c4 = (sim_rm1 + sim_rm2) / 2.0
+
+            del x_fused, x4_f, f_sa, f_rf, f_fm, f_rm1, f_rm2
             torch.cuda.empty_cache()
         else:
             outs.append(x4_cam)
 
-        return outs, sum(total_infonce_loss) / 4.0  ######
+        return outs, loss_c1, loss_c2, loss_c3, loss_c4  ######
         # return outs
 
 
@@ -787,6 +892,13 @@ def print_memory_usage(step=""):
     # CPU 内存使用情况
     mem_info = process.memory_info()
     print(f"[{step}] CPU Memory Used: {mem_info.rss / 1024 ** 2:.2f} MB")
+
+
+def check_nan_inf(tensor, name=""):
+    if torch.isnan(tensor).any() or torch.isinf(tensor).any():
+        print(f"{name} contains NaN or Inf!")
+        tensor = torch.clamp(tensor, min=-1e6, max=1e6)  # 将其限制在一个范围内
+    return tensor
 
 
 def compute_infonce_loss(anchor, positive, negatives):
@@ -827,6 +939,19 @@ def compute_infonce_loss(anchor, positive, negatives):
     # 计算 InfoNCE 损失
     loss = F.cross_entropy(logits, labels)
     return loss
+
+
+def get_selected_features(batch_size, indices, *features):
+    selected_features = []
+    for b in range(batch_size):
+        selected_features.append(features[indices[b]][b])
+    return torch.stack(selected_features)
+
+
+# 展平后计算余弦相似性 (默认沿着channel维度进行)
+def cosine_similarity(f1, f2):
+    return F.cosine_similarity(f1.flatten(1), f2.flatten(1), dim=1)
+
 
 
 # if __name__ == '__main__':
@@ -886,5 +1011,5 @@ if __name__ == '__main__':
         # 打印输出的形状
         for y in outs[0]:
             print(y.shape)
-        print(outs[1])
+        print(outs[1:])
 

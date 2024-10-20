@@ -1071,6 +1071,10 @@ class ConcatAndConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
         super(ConcatAndConv, self).__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
+        # Batch normalization
+        self.norm_layer = nn.BatchNorm2d(out_channels)
+        # ReLU activation
+        self.activation = nn.GELU()
 
     def forward(self, tensor_list):
         # 1. 在通道维度上拼接张量
@@ -1078,6 +1082,12 @@ class ConcatAndConv(nn.Module):
 
         # 2. 应用卷积层
         output_tensor = self.conv(concatenated_tensor)
+
+        # 3. 应用归一化层 (BatchNorm)
+        output_tensor = self.norm_layer(output_tensor)
+
+        # 4. 应用激活函数 (ReLU)
+        output_tensor = self.activation(output_tensor)
 
         return output_tensor
 
