@@ -24,36 +24,16 @@ class OhemCrossEntropy(nn.Module):
         super().__init__()
         self.ignore_label = ignore_label
         self.aux_weights = aux_weights
-        # self.thresh = -torch.log(torch.tensor(thresh, dtype=torch.float))
-        self.thresh = -torch.log(torch.clamp(torch.tensor(thresh, dtype=torch.float), min=1e-6))
+        self.thresh = -torch.log(torch.tensor(thresh, dtype=torch.float))
         self.criterion = nn.CrossEntropyLoss(weight=weight, ignore_index=ignore_label, reduction='none')
 
-    # def _forward(self, preds: Tensor, labels: Tensor) -> Tensor:
-    #     # preds in shape [B, C, H, W] and labels in shape [B, H, W]
-    #     n_min = labels[labels != self.ignore_label].numel() // 16
-    #     loss = self.criterion(preds, labels).view(-1)
-    #     loss_hard = loss[loss > self.thresh]
-    #
-    #     if loss_hard.numel() < n_min:
-    #         loss_hard, _ = loss.topk(n_min)
-    #
-    #     return torch.mean(loss_hard)
     def _forward(self, preds: Tensor, labels: Tensor) -> Tensor:
+        # preds in shape [B, C, H, W] and labels in shape [B, H, W]
         n_min = labels[labels != self.ignore_label].numel() // 16
         loss = self.criterion(preds, labels).view(-1)
-
-        # Clamp the loss values to avoid explosion
-        loss = torch.clamp(loss, max=1e6)
-
-        # Select hard examples based on threshold
         loss_hard = loss[loss > self.thresh]
 
-        # Handle cases where no hard examples are found
-        if loss_hard.numel() == 0:
-            return torch.tensor(0.0, dtype=loss.dtype, device=loss.device)
-
-        # Ensure minimum number of hard examples
-        if loss_hard.numel() < n_min and loss.numel() > 0:
+        if loss_hard.numel() < n_min:
             loss_hard, _ = loss.topk(n_min)
 
         return torch.mean(loss_hard)
