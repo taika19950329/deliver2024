@@ -1,6 +1,7 @@
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
+from torch.autograd import Variable
 from semseg.models.layers import DropPath
 import functools
 from functools import partial
@@ -498,6 +499,88 @@ class LayerNormParallel(nn.Module):
         return [getattr(self, 'ln_' + str(i))(x) for i, x in enumerate(x_parallel)]
 
 
+class Disentangle(nn.Module):
+    def __init__(self, dim=64):
+        super(Disentangle, self).__init__()
+
+        # encoder
+        r = 4
+        self.fc1 = nn.Conv2d(dim, r, 1)
+        self.bn1 = nn.BatchNorm2d(r, momentum=0.1)
+        self.fc1a = nn.Conv2d(r, r, 1)
+        self.fc1b = nn.Conv2d(r, r, 1)
+
+        self.fc2 = nn.Conv2d(dim, r, 1)
+        self.bn2 = nn.BatchNorm2d(r, momentum=0.1)
+        self.fc2a = nn.Conv2d(r, r, 1)
+        self.fc2b = nn.Conv2d(r, r, 1)
+
+        self.fc3 = nn.Conv2d(dim, r, 1)
+        self.bn3 = nn.BatchNorm2d(r, momentum=0.1)
+        self.fc3a = nn.Conv2d(r, r, 1)
+        self.fc3b = nn.Conv2d(r, r, 1)
+
+        self.fuse_mean = nn.Conv2d(r, r, 1)
+        self.fuse_var = nn.Conv2d(r, r, 1)
+
+        self.proj = nn.Conv2d(r, dim, 1)
+
+        # Add final normalization layer
+        self.final_bn = nn.BatchNorm2d(dim, momentum=0.1)
+
+    def encode(self, x):
+        means = []
+        vars = []
+
+        h1 = F.relu(self.bn1(self.fc1(x[0])))
+        a1_mean, a1_logvar = self.fc1a(h1), self.fc1b(h1)
+        means.append(a1_mean)
+        vars.append(a1_logvar)
+
+        h1 = F.relu(self.bn2(self.fc2(x[1])))
+        a1_mean, a1_logvar = self.fc2a(h1), self.fc2b(h1)
+        means.append(a1_mean)
+        vars.append(a1_logvar)
+
+        h1 = F.relu(self.bn3(self.fc3(x[2])))
+        a1_mean, a1_logvar = self.fc3a(h1), self.fc3b(h1)
+        means.append(a1_mean)
+        vars.append(a1_logvar)
+
+        mu_w, sigma_fused_w = weighted_fusion_initialization(means, vars)
+
+        mean = self.fuse_mean(mu_w)
+        var = self.fuse_var(sigma_fused_w)
+
+        noise_threshold = mean
+        fused_mean, fused_variance = kalman_fusion_feature_map(means, vars, mu_w, sigma_fused_w, noise_threshold)
+
+        del means, vars, mu_w, sigma_fused_w
+        proportion = 0.5
+        fused_variance = torch.log(fused_variance + 1e-6)
+
+        fused = self.reparametrize(fused_mean, proportion * fused_variance + (1 - proportion) * var)
+        output = self.proj(fused)
+
+        # Apply the final normalization layer
+        output = self.final_bn(output)
+
+        return output
+
+    def reparametrize(self, mu, logvar):
+        std = logvar.mul(0.5).exp_()
+        if torch.cuda.is_available():
+            eps = torch.cuda.FloatTensor(std.size()).normal_()
+        else:
+            eps = torch.FloatTensor(std.size()).normal_()
+        eps = Variable(eps)
+        return eps.mul(std).add_(mu)
+
+    def forward(self, x):
+        output = self.encode(x)
+        return output
+
+
 cmnext_settings = {
     'B0': [[32, 64, 160, 256], [2, 2, 2, 2]],
     # 'B1': [[64, 128, 320, 512], [2, 2, 2, 2]],
@@ -565,6 +648,15 @@ class CMNeXt(nn.Module):
         self.block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
         self.norm4 = nn.LayerNorm(embed_dims[3])
 
+        if self.num_modals > 1:
+            self.extra_score_predictor = nn.ModuleList(
+                [PredictorConv(embed_dims[i], self.num_modals) for i in range(len(depths))])
+
+        self.prompt_disentangle1 = Disentangle(embed_dims[0])
+        self.prompt_disentangle2 = Disentangle(embed_dims[1])
+        self.prompt_disentangle3 = Disentangle(embed_dims[2])
+        self.prompt_disentangle4 = Disentangle(embed_dims[3])
+
 
         if self.num_modals > 0:
             num_heads = [1, 2, 5, 8]
@@ -581,19 +673,19 @@ class CMNeXt(nn.Module):
 
         # 冻结参数debug
         # for layer in [self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
-        #               self.FRMs, self.FFMs,
-        #               self.concat_conv1, self.concat_conv2, self.concat_conv3, self.concat_conv4,
-        #               self.mam_concat_conv1, self.mam_concat_conv2, self.mam_concat_conv3, self.mam_concat_conv4,
+        #               self.FRMs, self.FFMs, self.extra_score_predictor,
+        #               self.prompt_disentangle1, self.prompt_disentangle2, self.prompt_disentangle3, self.prompt_disentangle4,
         #               self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
         #     for param in layer.parameters():
         #         param.requires_grad = False
 
-    def tokenselect(self, x_ext, module):
+    def tokenselect(self, x_ext, module, fuse):
         x_scores = module(x_ext)
         for i in range(len(x_ext)):
             x_ext[i] = x_scores[i] * x_ext[i] + x_ext[i]
-        x_f = functools.reduce(torch.max, x_ext)
-        return x_f
+        # x_f = functools.reduce(torch.max, x_ext)
+        output = fuse(x_ext)
+        return output #x_f
 
     def forward(self, x: list) -> list:  ######
         x_cam = x[0]
@@ -630,7 +722,9 @@ class CMNeXt(nn.Module):
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm1(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-            x1_f = self.concat_conv1(x_ext)
+            # x1_f = self.concat_conv1(x_ext)
+            x1_f = self.tokenselect(x_ext, self.extra_score_predictor[0],
+                                   self.prompt_disentangle1) if self.num_modals > 1 else x_ext[0]
 
             ## ------ rgb & X_share fusion ------ ##
             x1_cam, x1_f = self.FRMs[0](x1_cam, x1_f)
@@ -699,7 +793,9 @@ class CMNeXt(nn.Module):
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm2(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-            x2_f = self.concat_conv2(x_ext)
+            # x2_f = self.concat_conv2(x_ext)
+            x2_f = self.tokenselect(x_ext, self.extra_score_predictor[1],
+                                    self.prompt_disentangle2) if self.num_modals > 1 else x_ext[0]
 
             ## ------ rgb & X_share fusion ------ ##
             x2_cam, x2_f = self.FRMs[1](x2_cam, x2_f)
@@ -769,7 +865,9 @@ class CMNeXt(nn.Module):
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm3(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-            x3_f = self.concat_conv3(x_ext)
+            # x3_f = self.concat_conv3(x_ext)
+            x3_f = self.tokenselect(x_ext, self.extra_score_predictor[2],
+                                    self.prompt_disentangle3) if self.num_modals > 1 else x_ext[0]
 
             ## ------ rgb & X_share fusion ------ ##
             x3_cam, x3_f = self.FRMs[2](x3_cam, x3_f)
@@ -837,7 +935,9 @@ class CMNeXt(nn.Module):
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm4(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-            x4_f = self.concat_conv4(x_ext)
+            # x4_f = self.concat_conv4(x_ext)
+            x4_f = self.tokenselect(x_ext, self.extra_score_predictor[3],
+                                    self.prompt_disentangle4) if self.num_modals > 1 else x_ext[0]
 
             ## ------ rgb & X_share fusion ------ ##
             x4_cam, x4_f = self.FRMs[3](x4_cam, x4_f)
@@ -953,6 +1053,67 @@ def cosine_similarity(f1, f2):
     return F.cosine_similarity(f1.flatten(1), f2.flatten(1), dim=1)
 
 
+def weighted_fusion_initialization(means, variances, epsilon=1e-6):
+    # Stack means and variances along a new dimension for modalities, resulting in shape [m, b, c, h, w]
+    means_stack = torch.stack(means, dim=0)
+    variances_stack = torch.stack(variances, dim=0)
+
+    # Clamp variances to prevent division by zero
+    variances_stack = torch.clamp(variances_stack, min=epsilon)
+
+    # Calculate inverse variance weights
+    weights = 1 / variances_stack  # Shape [m, b, c, h, w]
+
+    # Compute the weighted sum of means and the sum of weights
+    weighted_sum_means = (means_stack * weights).sum(dim=0)  # Shape [b, c, h, w]
+    sum_weights = weights.sum(dim=0)  # Shape [b, c, h, w]
+
+    # Calculate the initial fused mean and variance
+    mu_init = weighted_sum_means / sum_weights  # Shape [b, c, h, w]
+    sigma_init_squared = 1 / sum_weights  # Initial variance, shape [b, c, h, w]
+
+    return mu_init, sigma_init_squared
+
+
+def kalman_fusion_feature_map(means, variances, mu_fused, sigma_fused_squared, noise_threshold):
+    """
+    Fuse the means and variances of multiple feature maps using Kalman filter principles.
+
+    Args:
+        means (torch.Tensor): Tensor of shape (n_features, batch_size, height, width) for means of each feature map.
+        variances (torch.Tensor): Tensor of shape (n_features, batch_size, height, width) for variances of each feature map.
+        noise_threshold (torch.Tensor): Feature map of shape (batch_size, height, width) for thresholding at each spatial location.
+
+    Returns:
+        torch.Tensor: Fused mean of shape (batch_size, height, width).
+        torch.Tensor: Fused variance of shape (batch_size, height, width).
+    """
+    # Initialize fused mean and variance with the first feature map
+    epsilon = 1e-6
+    mean_means = torch.mean(torch.stack(means), dim=0)
+    mean_vars = torch.mean(torch.stack(variances), dim=0)
+
+    if torch.all(mean_means == 0) and torch.all(mean_vars == 0):
+        return mean_means, mean_vars
+
+    # Loop through remaining feature maps
+    for i in range(len(means)):
+        # Clamp variances to prevent division by zero
+        sigma_fused_squared = torch.clamp(sigma_fused_squared, min=epsilon)
+        variances_i_clamped = torch.clamp(variances[i], min=epsilon)
+
+        K = sigma_fused_squared / (sigma_fused_squared + variances_i_clamped)
+
+        outliers = torch.abs(means[i] - mu_fused) > noise_threshold * torch.sqrt(sigma_fused_squared)
+
+        # Update fused mean and variance
+        mu_fused = torch.where(outliers, mu_fused, mu_fused + K * (means[i] - mu_fused))
+        sigma_fused_squared = torch.where(outliers, sigma_fused_squared + epsilon, (1 - K) * sigma_fused_squared)
+
+        # Debugging: Check for NaN values
+    return mu_fused, sigma_fused_squared
+
+
 
 # if __name__ == '__main__':
 #     modals = ['rgb', 'depth', 'event', 'lidar']
@@ -980,13 +1141,13 @@ def cosine_similarity(f1, f2):
 
 if __name__ == '__main__':
     modals = ['rgb', 'depth', 'event', 'lidar']
-    device = torch.device('cpu')  # 使用 GPU
+    device = torch.device('cuda')  # 使用 GPU
     x = [torch.ones(2, 3, 1024, 1024).to(device),
          torch.ones(2, 3, 1024, 1024).to(device),
          (torch.ones(2, 3, 1024, 1024) * 2).to(device),
          (torch.ones(2, 3, 1024, 1024) * 3).to(device)]
 
-    model = CMNeXt(int(x[0].shape[2] / 4), 'B1', modals).to(device)
+    model = CMNeXt(int(x[0].shape[2] / 4), 'B0', modals).to(device)
 
     # 初始化 GradScaler
     scaler = GradScaler()
