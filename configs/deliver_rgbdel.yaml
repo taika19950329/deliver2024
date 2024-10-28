@@ -3,8 +3,8 @@ SAVE_DIR        : 'output'          # output folder name used for saving the mod
 
 MODEL:
   NAME          : CMNeXt                                            # name of the model you are using
-  BACKBONE      : CMNeXt-B1                                         # model variant
-  PRETRAINED    : 'checkpoints/pretrained/segformer/mit_b1.pth'     # backbone model's weight
+  BACKBONE      : CMNeXt-B0                                         # model variant
+  PRETRAINED    : 'checkpoints/pretrained/segformer/mit_b0.pth'     # backbone model's weight
   RESUME        : ''                                                # checkpoint file 
 
 DATASET:
@@ -25,7 +25,7 @@ TRAIN:
   EPOCHS        : 200             # number of epochs to train
   EVAL_START    : 100             # evaluation interval start
   EVAL_INTERVAL : 1               # evaluation interval during training
-  AMP           : true           # use AMP in training
+  AMP           : true            # use AMP in training
   DDP           : true            # use DDP training
 
 LOSS:
@@ -58,13 +58,15 @@ EVAL:
 #  MODEL_PATH    : 'output/DELIVER_CMNeXt-B2_idel_MoE_20240731/CMNeXt_CMNeXt-B2_DELIVER_epoch172_62.96_checkpoint.pth'
 #  MODEL_PATH    : 'output/DELIVER_CMNeXt-B2_idel_MoE_20240803/CMNeXt_CMNeXt-B2_DELIVER_epoch115_61.81.pth'
 #  MODEL_PATH    : 'output/DELIVER_CMNeXt-B2_idel_MoE_20240814/CMNeXt_CMNeXt-B2_DELIVER_epoch184_61.91.pth'
-  MODEL_PATH    : 'output/zw/DELIVER_CMNeXt-B1_idel_mit-lora-moe_20240912/CMNeXt_CMNeXt-B1_DELIVER_epoch192_62.04.pth'
+#  MODEL_PATH    : 'output/zw/DELIVER_CMNeXt-B1_idel_mit-lora-moe_20240912/CMNeXt_CMNeXt-B1_DELIVER_epoch192_62.04.pth'
+#  MODEL_PATH    : 'output/DELIVER_CMNeXt-B1_idel_mit-lora-l1-h100_20240929/CMNeXt_CMNeXt-B1_DELIVER_epoch96_61.49.pth'   #infonce
+  MODEL_PATH    : 'output/DELIVER_CMNeXt-B0_idel_mit-b0-lora-con-l1-h100_20241024/CMNeXt_CMNeXt-B0_DELIVER_epoch182_59.15.pth'    #b0
   IMAGE_SIZE    : [1024, 1024]                            # evaluation image size in (h, w)
   BATCH_SIZE    : 4                                       # batch size used to train               
   MSF: 
     ENABLE      : false                                   # multi-scale and flip evaluation  
     FLIP        : true                                    # use flip in evaluation  
-    SCALES      : [0.5, 0.75, 1.0, 1.25, 1.5, 1.75]       # scales used in MSF evaluation                
+    SCALES      : [1.0]       # scales used in MSF evaluation
 
 
 TEST:
@@ -75,7 +77,9 @@ TEST:
 #  MODEL_PATH    : 'output/DELIVER_CMNeXt-B2_idel_MoE_20240731/CMNeXt_CMNeXt-B2_DELIVER_epoch172_62.96_checkpoint.pth'
 #  MODEL_PATH    : 'output/DELIVER_CMNeXt-B2_idel_MoE_20240803/CMNeXt_CMNeXt-B2_DELIVER_epoch115_61.81.pth'
 #  MODEL_PATH    : 'output/DELIVER_CMNeXt-B2_idel_MoE_20240814/CMNeXt_CMNeXt-B2_DELIVER_epoch184_61.91.pth'
-  MODEL_PATH    : 'output/zw/DELIVER_CMNeXt-B1_idel_mit-lora-moe_20240912/CMNeXt_CMNeXt-B1_DELIVER_epoch192_62.04.pth'
+#  MODEL_PATH    : 'output/zw/DELIVER_CMNeXt-B1_idel_mit-lora-moe_20240912/CMNeXt_CMNeXt-B1_DELIVER_epoch192_62.04.pth'
+#  MODEL_PATH    : 'output/DELIVER_CMNeXt-B1_idel_mit-lora-l1-h100_20240929/CMNeXt_CMNeXt-B1_DELIVER_epoch96_61.49.pth'
+  MODEL_PATH    : 'output/DELIVER_CMNeXt-B0_idel_mit-b0-lora-con-l1-h100_20241024/CMNeXt_CMNeXt-B0_DELIVER_epoch182_59.15.pth'
   FILE          : 'data/DELIVER'                          # filename or foldername
   IMAGE_SIZE    : [1024, 1024]                            # inference image size in (h, w)
   OVERLAY       : false                                   # save the overlay result (image_alpha+label_alpha)
