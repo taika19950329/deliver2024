@@ -128,8 +128,8 @@ def main(cfg, gpu, save_dir):
             lbl = lbl.to(device)
 
             with autocast(enabled=train_cfg['AMP']):
-                logits, cons_loss1, cons_loss2, cons_loss3, cons_loss4 = model(sample)   #######
-                loss = loss_fn(logits, lbl) + cons_loss1 + cons_loss2 + cons_loss3 + cons_loss4
+                logits, logit_d, logit_e, logit_l = model(sample)   #######
+                loss = loss_fn(logits, lbl) + 0.2 * loss_fn(logit_d, lbl) + 0.4 * loss_fn(logit_e, lbl) + 0.4 * loss_fn(logit_l, lbl)
 
             # # 检查 loss 是否是 NaN
             # if torch.isnan(loss):

@@ -13,16 +13,33 @@ class CMNeXt(BaseModel):
                  modals: list = ['img', 'depth', 'event', 'lidar']) -> None:
         super().__init__(weight_h_ori, backbone, num_classes, modals)
         # print('base model cmnext weight_h_ori', weight_h_ori)
-        self.decode_head = SegFormerHead(self.backbone.channels, 256 if 'B0' in backbone or 'B1' in backbone else 512,
-                                         num_classes)
+        self.decode_head_f = SegFormerHead(self.backbone.channels, 256 if 'B0' in backbone or 'B1' in backbone else 512,
+                                           num_classes)
+        self.decode_head_d = SegFormerHead(self.backbone.channels, 256 if 'B0' in backbone or 'B1' in backbone else 512,
+                                           num_classes)
+        self.decode_head_e = SegFormerHead(self.backbone.channels, 256 if 'B0' in backbone or 'B1' in backbone else 512,
+                                           num_classes)
+        self.decode_head_l = SegFormerHead(self.backbone.channels, 256 if 'B0' in backbone or 'B1' in backbone else 512,
+                                           num_classes)
         self.apply(self._init_weights)
 
     def forward(self, x: list) -> list:
         # print('base model cmnext forward input', x[0].shape)
-        y, con_loss1, con_loss2, con_loss3, con_loss4 = self.backbone(x)
-        y = self.decode_head(y)
-        y = F.interpolate(y, size=x[0].shape[2:], mode='bilinear', align_corners=False)
-        return y, con_loss1, con_loss2, con_loss3, con_loss4
+        y_f, y_ext = self.backbone(x)
+        y_f = self.decode_head_f(y_f)
+        y_f = F.interpolate(y_f, size=x[0].shape[2:], mode='bilinear', align_corners=False)
+        if self.training:
+            print('training!!!')
+            y_d = self.decode_head_d(y_ext[0])
+            y_e = self.decode_head_e(y_ext[1])
+            y_l = self.decode_head_l(y_ext[2])
+
+            y_d = F.interpolate(y_d, size=x[0].shape[2:], mode='bilinear', align_corners=False)
+            y_e = F.interpolate(y_e, size=x[0].shape[2:], mode='bilinear', align_corners=False)
+            y_l = F.interpolate(y_l, size=x[0].shape[2:], mode='bilinear', align_corners=False)
+            return y_f, y_d, y_e, y_l
+        else:
+            return y_f
 
     def init_pretrained(self, pretrained: str = None) -> None:
         if pretrained:
@@ -101,11 +118,13 @@ def load_dualpath_model(model, model_file):
 
 
 if __name__ == '__main__':
+    device = torch.device('cuda')
     modals = ['img', 'depth', 'event', 'lidar']
-    x = [torch.zeros(2, 3, 512, 512), torch.ones(2, 3, 512, 512), torch.ones(2, 3, 512, 512) * 2,
-         torch.ones(2, 3, 512, 512) * 3]
-    model = CMNeXt(int(x[0].shape[2] / 4), 'CMNeXt-B2', 25, modals)
-    model.init_pretrained('/home/yi/Documents/DELIVER/checkpoints/pretrained/segformer/mit_b2.pth')
-    y, moe_loss = model(x)
-    print(y.shape)
-    print(moe_loss)
+    x = [torch.zeros(2, 3, 1024, 1024).to(device), torch.ones(2, 3, 1024, 1024).to(device), (torch.ones(2, 3, 1024, 1024) * 2).to(device),
+         (torch.ones(2, 3, 1024, 1024) * 3).to(device)]
+    model = CMNeXt(int(x[0].shape[2] / 4), 'CMNeXt-B0', 25, modals).to(device)
+    model.init_pretrained('/home/yi/Documents/DELIVER/checkpoints/pretrained/segformer/mit_b0.pth')
+    model.eval()
+    y1= model(x)
+    print(len(y1))
+    # print(moe_loss)

@@ -694,7 +694,10 @@ class CMNeXt(nn.Module):
 
         B = x_cam.shape[0]
         outs = []
-        total_infonce_loss = []
+        
+        outs_ext = [None] * self.num_modals  # 初始化 outs_ext，预留空间
+        for j in range(self.num_modals):
+            outs_ext[j] = []
 
         # ------ stage 1 ------ #
         ## ------ rgb encoder lora process ------ ##
@@ -721,6 +724,7 @@ class CMNeXt(nn.Module):
                     for blk in self.block1:
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm1(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+                outs_ext[i].append(x_ext[i])
 
             # x1_f = self.concat_conv1(x_ext)
             x1_f = self.tokenselect([x1_cam] + x_ext, self.extra_score_predictor[0],
@@ -792,6 +796,7 @@ class CMNeXt(nn.Module):
                     for blk in self.block2:
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm2(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+                outs_ext[i].append(x_ext[i])
 
             # x2_f = self.concat_conv2(x_ext)
             x2_f = self.tokenselect([x2_cam] + x_ext, self.extra_score_predictor[1],
@@ -864,6 +869,7 @@ class CMNeXt(nn.Module):
                     for blk in self.block3:
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm3(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+                outs_ext[i].append(x_ext[i])
 
             # x3_f = self.concat_conv3(x_ext)
             x3_f = self.tokenselect([x3_cam] + x_ext, self.extra_score_predictor[2],
@@ -934,6 +940,7 @@ class CMNeXt(nn.Module):
                     for blk in self.block4:
                         x_ext[i] = blk(x_ext[i], H, W, 'lidar')
                 x_ext[i] = self.norm4(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+                outs_ext[i].append(x_ext[i])
 
             # x4_f = self.concat_conv4(x_ext)
             x4_f = self.tokenselect([x4_cam] + x_ext, self.extra_score_predictor[3],
@@ -979,7 +986,7 @@ class CMNeXt(nn.Module):
         else:
             outs.append(x4_cam)
 
-        return outs  ######
+        return outs, outs_ext  ######
         # return outs
 
 
@@ -1160,7 +1167,7 @@ if __name__ == '__main__':
 
         # 使用混合精度训练
         with autocast():
-            outs = model(x)
+            outs, outs2 = model(x)
             # 假设使用一个简单的损失函数
         #     loss = sum(outs[1:])
         #
@@ -1172,4 +1179,8 @@ if __name__ == '__main__':
         # 打印输出的形状
         for out in outs:
             print(out.shape)
+        for out in outs2:
+            print(len(out))
+            for outt in out:
+                print(outt.shape)
         # print(outs[1:])

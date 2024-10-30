@@ -21,12 +21,12 @@ DATASET:
 
 TRAIN:
   IMAGE_SIZE    : [1024, 1024]    # training image size in (h, w)
-  BATCH_SIZE    : 2               # batch size used to train
+  BATCH_SIZE    : 1               # batch size used to train
   EPOCHS        : 200             # number of epochs to train
   EVAL_START    : 100             # evaluation interval start
   EVAL_INTERVAL : 1               # evaluation interval during training
   AMP           : true            # use AMP in training
-  DDP           : true            # use DDP training
+  DDP           : false            # use DDP training
 
 LOSS:
   NAME          : OhemCrossEntropy          # loss function name 

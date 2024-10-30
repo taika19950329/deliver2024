@@ -77,7 +77,7 @@ def evaluate(model, dataloader, device):
         if sliding:
             preds = sliding_predict(model, images, num_classes=n_classes).softmax(dim=1)
         else:
-            preds = model(images)[0].softmax(dim=1)  #######
+            preds = model(images).softmax(dim=1)  #######
         metrics.update(preds, labels)
 
     ious, miou = metrics.compute_iou()
