@@ -132,69 +132,6 @@ class Attention(nn.Module):
             self.alpha  # 使用缩放因子
         )
 
-        # LoRA for depth
-        self.lora_depth_a_q = nn.Linear(dim, r, bias=False)
-        self.lora_depth_b_q = nn.Linear(r, dim, bias=False)
-        self.lora_depth_a_v = nn.Linear(dim, r, bias=False)
-        self.lora_depth_b_v = nn.Linear(r, dim, bias=False)
-
-        self.lora_depth_q = _LoRA_q(
-            self.q,
-            self.lora_depth_a_q,
-            self.lora_depth_b_q,
-            self.alpha
-        )
-        self.lora_depth_kv = _LoRA_kv(
-            self.kv,
-            self.lora_depth_a_v,
-            self.lora_depth_b_v,
-            self.lora_depth_a_v,  # Reusing the same for k and v
-            self.lora_depth_b_v,
-            self.alpha
-        )
-
-        # LoRA for event
-        self.lora_event_a_q = nn.Linear(dim, r, bias=False)
-        self.lora_event_b_q = nn.Linear(r, dim, bias=False)
-        self.lora_event_a_v = nn.Linear(dim, r, bias=False)
-        self.lora_event_b_v = nn.Linear(r, dim, bias=False)
-
-        self.lora_event_q = _LoRA_q(
-            self.q,
-            self.lora_event_a_q,
-            self.lora_event_b_q,
-            self.alpha
-        )
-        self.lora_event_kv = _LoRA_kv(
-            self.kv,
-            self.lora_event_a_v,
-            self.lora_event_b_v,
-            self.lora_event_a_v,  # Reusing the same for k and v
-            self.lora_event_b_v,
-            self.alpha
-        )
-
-        # LoRA for lidar
-        self.lora_lidar_a_q = nn.Linear(dim, r, bias=False)
-        self.lora_lidar_b_q = nn.Linear(r, dim, bias=False)
-        self.lora_lidar_a_v = nn.Linear(dim, r, bias=False)
-        self.lora_lidar_b_v = nn.Linear(r, dim, bias=False)
-
-        self.lora_lidar_q = _LoRA_q(
-            self.q,
-            self.lora_lidar_a_q,
-            self.lora_lidar_b_q,
-            self.alpha
-        )
-        self.lora_lidar_kv = _LoRA_kv(
-            self.kv,
-            self.lora_lidar_a_v,
-            self.lora_lidar_b_v,
-            self.lora_lidar_a_v,  # Reusing the same for k and v
-            self.lora_lidar_b_v,
-            self.alpha
-        )
-
         # LoRA for share
         self.lora_share_a_q = nn.Linear(dim, r, bias=False)
         self.lora_share_b_q = nn.Linear(r, dim, bias=False)
@@ -226,12 +163,6 @@ class Attention(nn.Module):
         # Apply LoRA to Q
         if type == 'rgb':
             q = self.lora_rgb_q(x).reshape(B, N, self.head, C // self.head).permute(0, 2, 1, 3)
-        elif type == 'depth':
-            q = self.lora_depth_q(x).reshape(B, N, self.head, C // self.head).permute(0, 2, 1, 3)
-        elif type == 'event':
-            q = self.lora_event_q(x).reshape(B, N, self.head, C // self.head).permute(0, 2, 1, 3)
-        elif type == 'lidar':
-            q = self.lora_lidar_q(x).reshape(B, N, self.head, C // self.head).permute(0, 2, 1, 3)
         elif type == 'share':
             q = self.lora_share_q(x).reshape(B, N, self.head, C // self.head).permute(0, 2, 1, 3)
 
@@ -244,12 +175,6 @@ class Attention(nn.Module):
         # Apply LoRA to KV
         if type == 'rgb':
             k, v = self.lora_rgb_kv(x).reshape(B, -1, 2, self.head, C // self.head).permute(2, 0, 3, 1, 4)
-        elif type == 'depth':
-            k, v = self.lora_depth_kv(x).reshape(B, -1, 2, self.head, C // self.head).permute(2, 0, 3, 1, 4)
-        elif type == 'event':
-            k, v = self.lora_event_kv(x).reshape(B, -1, 2, self.head, C // self.head).permute(2, 0, 3, 1, 4)
-        elif type == 'lidar':
-            k, v = self.lora_lidar_kv(x).reshape(B, -1, 2, self.head, C // self.head).permute(2, 0, 3, 1, 4)
         elif type == 'share':
             k, v = self.lora_share_kv(x).reshape(B, -1, 2, self.head, C // self.head).permute(2, 0, 3, 1, 4)
 
@@ -299,24 +224,6 @@ class MLP(nn.Module):
         self.lora_rgb_a_fc2 = nn.Linear(c2, r, bias=False)
         self.lora_rgb_b_fc2 = nn.Linear(r, c1, bias=False)
 
-        # LoRA layers for depth
-        self.lora_depth_a_fc1 = nn.Linear(c1, r, bias=False)
-        self.lora_depth_b_fc1 = nn.Linear(r, c2, bias=False)
-        self.lora_depth_a_fc2 = nn.Linear(c2, r, bias=False)
-        self.lora_depth_b_fc2 = nn.Linear(r, c1, bias=False)
-
-        # LoRA layers for event
-        self.lora_event_a_fc1 = nn.Linear(c1, r, bias=False)
-        self.lora_event_b_fc1 = nn.Linear(r, c2, bias=False)
-        self.lora_event_a_fc2 = nn.Linear(c2, r, bias=False)
-        self.lora_event_b_fc2 = nn.Linear(r, c1, bias=False)
-
-        # LoRA layers for lidar
-        self.lora_lidar_a_fc1 = nn.Linear(c1, r, bias=False)
-        self.lora_lidar_b_fc1 = nn.Linear(r, c2, bias=False)
-        self.lora_lidar_a_fc2 = nn.Linear(c2, r, bias=False)
-        self.lora_lidar_b_fc2 = nn.Linear(r, c1, bias=False)
-
         # LoRA layers for share
         self.lora_share_a_fc1 = nn.Linear(c1, r, bias=False)
         self.lora_share_b_fc1 = nn.Linear(r, c2, bias=False)
@@ -329,12 +236,6 @@ class MLP(nn.Module):
         # LoRA adjustment to fc1
         if type == 'rgb':
             out_fc1_lora = self.lora_rgb_b_fc1(self.lora_rgb_a_fc1(x))
-        elif type == 'depth':
-            out_fc1_lora = self.lora_depth_b_fc1(self.lora_depth_a_fc1(x))
-        elif type == 'event':
-            out_fc1_lora = self.lora_event_b_fc1(self.lora_event_a_fc1(x))
-        elif type == 'lidar':
-            out_fc1_lora = self.lora_lidar_b_fc1(self.lora_lidar_a_fc1(x))
         elif type == 'share':
             out_fc1_lora = self.lora_share_b_fc1(self.lora_share_a_fc1(x))
         out_fc1 = out_fc1 + out_fc1_lora  # Combine original and LoRA
@@ -350,12 +251,6 @@ class MLP(nn.Module):
         # LoRA adjustment to fc2
         if type == 'rgb':
             out_fc2_lora = self.lora_rgb_b_fc2(self.lora_rgb_a_fc2(out_act))
-        elif type == 'depth':
-            out_fc2_lora = self.lora_depth_b_fc2(self.lora_depth_a_fc2(out_act))
-        elif type == 'event':
-            out_fc2_lora = self.lora_event_b_fc2(self.lora_event_a_fc2(out_act))
-        elif type == 'lidar':
-            out_fc2_lora = self.lora_lidar_b_fc2(self.lora_lidar_a_fc2(out_act))
         elif type == 'share':
             out_fc2_lora = self.lora_share_b_fc2(self.lora_share_a_fc2(out_act))
         out_fc2 = out_fc2 + out_fc2_lora  # Combine original and LoRA
@@ -648,14 +543,22 @@ class CMNeXt(nn.Module):
         self.block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
         self.norm4 = nn.LayerNorm(embed_dims[3])
 
+        if self.num_modals > 0:
+            self.extra_downsample_layers = nn.ModuleList([
+                PatchEmbedParallel(3, embed_dims[0], 7, 4, 7 // 2, self.num_modals),
+                *[PatchEmbedParallel(embed_dims[i], embed_dims[i + 1], 3, 2, 3 // 2, self.num_modals) for i in range(3)]
+            ])
+
         if self.num_modals > 1:
             self.extra_score_predictor = nn.ModuleList(
-                [PredictorConv(embed_dims[i], self.num_modals + 1) for i in range(len(depths))])
+                [PredictorConv(3, self.num_modals + 1)] +
+                [PredictorConv(embed_dims[i], self.num_modals + 1) for i in range(3)]
+            )
 
-        self.prompt_disentangle1 = Disentangle(embed_dims[0])
-        self.prompt_disentangle2 = Disentangle(embed_dims[1])
-        self.prompt_disentangle3 = Disentangle(embed_dims[2])
-        self.prompt_disentangle4 = Disentangle(embed_dims[3])
+        self.prompt_disentangle1 = Disentangle(3)
+        self.prompt_disentangle2 = Disentangle(embed_dims[0])
+        self.prompt_disentangle3 = Disentangle(embed_dims[1])
+        self.prompt_disentangle4 = Disentangle(embed_dims[2])
 
 
         if self.num_modals > 0:
@@ -694,77 +597,36 @@ class CMNeXt(nn.Module):
 
         B = x_cam.shape[0]
         outs = []
-        
-        outs_ext = [None] * self.num_modals  # 初始化 outs_ext，预留空间
-        for j in range(self.num_modals):
-            outs_ext[j] = []
 
         # ------ stage 1 ------ #
         ## ------ rgb encoder lora process ------ ##
         # print_memory_usage("Before stage1")
-        x_cam, H, W = self.patch_embed1(x_cam)
-        for blk in self.block1:
-            x_cam = blk(x_cam, H, W, 'rgb')
-        x1_cam = self.norm1(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
-        del x_cam
-        torch.cuda.empty_cache()
 
         if self.num_modals > 0:
-            ## ------ diff feature encoder lora process ------ ##
-            for i in range(self.num_modals):
-                x_ext[i], _, _ = self.patch_embed1(x_ext[i])
-                if i == 0:
-                    for blk in self.block1:
-                        x_ext[i] = blk(x_ext[i], H, W, 'depth')
-                elif i == 1:
-                    for blk in self.block1:
-                        x_ext[i] = blk(x_ext[i], H, W, 'event')
-                elif i == 2:
-                    for blk in self.block1:
-                        x_ext[i] = blk(x_ext[i], H, W, 'lidar')
-                x_ext[i] = self.norm1(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-                outs_ext[i].append(x_ext[i])
+            x_f = self.tokenselect([x_cam] + x_ext, self.extra_score_predictor[0],
+                                    self.prompt_disentangle1) if self.num_modals > 1 else x_ext[0]
 
-            # x1_f = self.concat_conv1(x_ext)
-            x1_f = self.tokenselect([x1_cam] + x_ext, self.extra_score_predictor[0],
-                                   self.prompt_disentangle1) if self.num_modals > 1 else x_ext[0]
+            ## ------ diff feature encoder lora process ------ ##
+            x1_f, H, W = self.patch_embed1(x_f)
+            for blk in self.block1:
+                x1_f = blk(x1_f, H, W, 'share')
+            x1_f = self.norm1(x1_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            x_cam, H, W = self.patch_embed1(x_cam)
+            for blk in self.block1:
+                x_cam = blk(x_cam, H, W, 'rgb')
+            x1_cam = self.norm1(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            x_ext, _, _ = self.extra_downsample_layers[0](x_ext)
+            x_ext = [x_ + x1_f for x_ in x_ext] if self.num_modals > 1 else [x1_f]
+
+            del x_f, x_cam
+            torch.cuda.empty_cache()
 
             ## ------ rgb & X_share fusion ------ ##
             x1_cam, x1_f = self.FRMs[0](x1_cam, x1_f)
             x_fused = self.FFMs[0](x1_cam, x1_f)
             outs.append(x_fused)
-
-            # ## ------ magic ------ ##
-            # # 计算各个模态特征与x_fused的相似性
-            # sim_r = cosine_similarity(x1_cam, x_fused)
-            # sim_d = cosine_similarity(x_ext[0], x_fused)
-            # sim_e = cosine_similarity(x_ext[1], x_fused)
-            # sim_l = cosine_similarity(x_ext[2], x_fused)
-            #
-            # # print(sim_r, sim_d, sim_e, sim_l)
-            #
-            # # 将相似性放入一个张量中，然后进行排序
-            # similarities = torch.stack([sim_r, sim_d, sim_e, sim_l], dim=1)  # [B, 4]
-            # ranked_similarities, indices = similarities.sort(dim=1, descending=True)
-            #
-            # # 获取最强(robust) 和 最弱 (fragile) 的特征
-            # f_rf = get_selected_features(B, indices[:, 0], x1_cam, x_ext[0], x_ext[1], x_ext[2])  # 最强特征
-            # f_fm = get_selected_features(B, indices[:, -1], x1_cam, x_ext[0], x_ext[1], x_ext[2])  # 最弱特征
-            # f_rm1 = get_selected_features(B, indices[:, 1], x1_cam, x_ext[0], x_ext[1], x_ext[2])
-            # f_rm2 = get_selected_features(B, indices[:, 2], x1_cam, x_ext[0], x_ext[1], x_ext[2])
-            #
-            # f_sa = (f_rf + f_fm) / 2.0
-            # # 剪裁
-            # f_sa = check_nan_inf(f_sa, "f_sa")
-            # f_rm1 = check_nan_inf(f_rm1, "f_rm1")
-            # f_rm2 = check_nan_inf(f_rm2, "f_rm2")
-            # # 语义一致性训练
-            # # 计算剩余特征与 f_sa 的相似性
-            # sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
-            # sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
-            #
-            # loss_c1 = (sim_rm1 + sim_rm2) / 2.0
 
             del x_fused, x1_f
             torch.cuda.empty_cache()
@@ -774,70 +636,32 @@ class CMNeXt(nn.Module):
         # ------ stage 2 ------ #
         ## ------ rgb encoder lora process ------ ##
         # print_memory_usage("Before stage2")
-        x1_cam, H, W = self.patch_embed2(x1_cam)
-        for blk in self.block2:
-            x1_cam = blk(x1_cam, H, W, 'rgb')
-        x2_cam = self.norm2(x1_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-        del x1_cam
-        torch.cuda.empty_cache()
 
         if self.num_modals > 0:
-            ## ------ diff feature encoder lora process ------ ##
-            for i in range(self.num_modals):
-                x_ext[i], _, _ = self.patch_embed2(x_ext[i])
-                if i == 0:
-                    for blk in self.block2:
-                        x_ext[i] = blk(x_ext[i], H, W, 'depth')
-                elif i == 1:
-                    for blk in self.block2:
-                        x_ext[i] = blk(x_ext[i], H, W, 'event')
-                elif i == 2:
-                    for blk in self.block2:
-                        x_ext[i] = blk(x_ext[i], H, W, 'lidar')
-                x_ext[i] = self.norm2(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-                outs_ext[i].append(x_ext[i])
-
-            # x2_f = self.concat_conv2(x_ext)
-            x2_f = self.tokenselect([x2_cam] + x_ext, self.extra_score_predictor[1],
+            x_f = self.tokenselect([x1_cam] + x_ext, self.extra_score_predictor[1],
                                     self.prompt_disentangle2) if self.num_modals > 1 else x_ext[0]
+
+            x1_cam, H, W = self.patch_embed2(x1_cam)
+            for blk in self.block2:
+                x1_cam = blk(x1_cam, H, W, 'rgb')
+            x2_cam = self.norm2(x1_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            x2_f, H, W = self.patch_embed2(x_f)
+            for blk in self.block2:
+                x2_f = blk(x2_f, H, W, 'share')
+            x2_f = self.norm2(x2_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            x_ext, _, _ = self.extra_downsample_layers[1](x_ext)
+            x_ext = [x_ + x2_f for x_ in x_ext] if self.num_modals > 1 else [x2_f]
+
+            del x_f, x1_cam
+            torch.cuda.empty_cache()
 
             ## ------ rgb & X_share fusion ------ ##
             x2_cam, x2_f = self.FRMs[1](x2_cam, x2_f)
             x_fused = self.FFMs[1](x2_cam, x2_f)
-
             outs.append(x_fused)
-
-            # ## ------ magic ------ ##
-            # # 计算各个模态特征与x_fused的相似性
-            # sim_r = cosine_similarity(x2_cam, x_fused)
-            # sim_d = cosine_similarity(x_ext[0], x_fused)
-            # sim_e = cosine_similarity(x_ext[1], x_fused)
-            # sim_l = cosine_similarity(x_ext[2], x_fused)
-            #
-            # # 将相似性放入一个张量中，然后进行排序
-            # similarities = torch.stack([sim_r, sim_d, sim_e, sim_l], dim=1)  # [B, 4]
-            # ranked_similarities, indices = similarities.sort(dim=1, descending=True)
-            #
-            # # 获取最强(robust) 和 最弱 (fragile) 的特征
-            # f_rf = get_selected_features(B, indices[:, 0], x2_cam, x_ext[0], x_ext[1], x_ext[2])  # 最强特征
-            # f_fm = get_selected_features(B, indices[:, -1], x2_cam, x_ext[0], x_ext[1], x_ext[2])  # 最弱特征
-            # f_rm1 = get_selected_features(B, indices[:, 1], x2_cam, x_ext[0], x_ext[1], x_ext[2])
-            # f_rm2 = get_selected_features(B, indices[:, 2], x2_cam, x_ext[0], x_ext[1], x_ext[2])
-            #
-            # # mam
-            # f_sa = (f_rf + f_fm) / 2.0
-            #
-            # # 剪裁
-            # f_sa = check_nan_inf(f_sa, "f_sa")
-            # f_rm1 = check_nan_inf(f_rm1, "f_rm1")
-            # f_rm2 = check_nan_inf(f_rm2, "f_rm2")
-            # # 语义一致性训练
-            # # 计算剩余特征与 f_sa 的相似性
-            # sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
-            # sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
-            #
-            # loss_c2 = (sim_rm1 + sim_rm2) / 2.0
 
             del x_fused, x2_f
             torch.cuda.empty_cache()
@@ -846,69 +670,30 @@ class CMNeXt(nn.Module):
 
         # ------ stage 3 ------ #
         ## ------ rgb encoder lora process ------ ##
-        # print_memory_usage("Before stage3")
-        x2_cam, H, W = self.patch_embed3(x2_cam)
-        for blk in self.block3:
-            x2_cam = blk(x2_cam, H, W, 'rgb')
-        x3_cam = self.norm3(x2_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
-        del x2_cam
-        torch.cuda.empty_cache()
-
         if self.num_modals > 0:
-            ## ------ diff feature encoder lora process ------ ##
-            for i in range(self.num_modals):
-                x_ext[i], _, _ = self.patch_embed3(x_ext[i])
-                if i == 0:
-                    for blk in self.block3:
-                        x_ext[i] = blk(x_ext[i], H, W, 'depth')
-                elif i == 1:
-                    for blk in self.block3:
-                        x_ext[i] = blk(x_ext[i], H, W, 'event')
-                elif i == 2:
-                    for blk in self.block3:
-                        x_ext[i] = blk(x_ext[i], H, W, 'lidar')
-                x_ext[i] = self.norm3(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-                outs_ext[i].append(x_ext[i])
-
-            # x3_f = self.concat_conv3(x_ext)
-            x3_f = self.tokenselect([x3_cam] + x_ext, self.extra_score_predictor[2],
+            x_f = self.tokenselect([x2_cam] + x_ext, self.extra_score_predictor[2],
                                     self.prompt_disentangle3) if self.num_modals > 1 else x_ext[0]
+
+            x2_cam, H, W = self.patch_embed3(x2_cam)
+            for blk in self.block3:
+                x2_cam = blk(x2_cam, H, W, 'rgb')
+            x3_cam = self.norm3(x2_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            x3_f, H, W = self.patch_embed3(x_f)
+            for blk in self.block3:
+                x3_f = blk(x3_f, H, W, 'share')
+            x3_f = self.norm3(x3_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            del x_f, x2_cam
+            torch.cuda.empty_cache()
+
+            x_ext, _, _ = self.extra_downsample_layers[2](x_ext)
+            x_ext = [x_ + x3_f for x_ in x_ext] if self.num_modals > 1 else [x3_f]
 
             ## ------ rgb & X_share fusion ------ ##
             x3_cam, x3_f = self.FRMs[2](x3_cam, x3_f)
             x_fused = self.FFMs[2](x3_cam, x3_f)
             outs.append(x_fused)
-
-            # ## ------ magic ------ ##
-            # # 计算各个模态特征与x_fused的相似性
-            # sim_r = cosine_similarity(x3_cam, x_fused)
-            # sim_d = cosine_similarity(x_ext[0], x_fused)
-            # sim_e = cosine_similarity(x_ext[1], x_fused)
-            # sim_l = cosine_similarity(x_ext[2], x_fused)
-            #
-            # # 将相似性放入一个张量中，然后进行排序
-            # similarities = torch.stack([sim_r, sim_d, sim_e, sim_l], dim=1)  # [B, 4]
-            # ranked_similarities, indices = similarities.sort(dim=1, descending=True)
-            #
-            # # 获取最强(robust) 和 最弱 (fragile) 的特征
-            # f_rf = get_selected_features(B, indices[:, 0], x3_cam, x_ext[0], x_ext[1], x_ext[2])  # 最强特征
-            # f_fm = get_selected_features(B, indices[:, -1], x3_cam, x_ext[0], x_ext[1], x_ext[2])  # 最弱特征
-            # f_rm1 = get_selected_features(B, indices[:, 1], x3_cam, x_ext[0], x_ext[1], x_ext[2])
-            # f_rm2 = get_selected_features(B, indices[:, 2], x3_cam, x_ext[0], x_ext[1], x_ext[2])
-            #
-            # f_sa = (f_rf + f_fm) / 2.0
-            #
-            # # 剪裁
-            # f_sa = check_nan_inf(f_sa, "f_sa")
-            # f_rm1 = check_nan_inf(f_rm1, "f_rm1")
-            # f_rm2 = check_nan_inf(f_rm2, "f_rm2")
-            # # 语义一致性训练
-            # # 计算剩余特征与 f_sa 的相似性
-            # sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
-            # sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
-            #
-            # loss_c3 = (sim_rm1 + sim_rm2) / 2.0
 
             del x_fused, x3_f
             torch.cuda.empty_cache()
@@ -918,75 +703,35 @@ class CMNeXt(nn.Module):
         # ------ stage 4 ------ #
         ## ------ rgb encoder lora process ------ ##
         # print_memory_usage("Before stage4")
-        x3_cam, H, W = self.patch_embed4(x3_cam)
-        for blk in self.block4:
-            x3_cam = blk(x3_cam, H, W, 'rgb')
-        x4_cam = self.norm4(x3_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
-        del x3_cam
-        torch.cuda.empty_cache()
 
         if self.num_modals > 0:
-            ## ------ diff feature encoder lora process ------ ##
-            for i in range(self.num_modals):
-                x_ext[i], _, _ = self.patch_embed4(x_ext[i])
-                if i == 0:
-                    for blk in self.block4:
-                        x_ext[i] = blk(x_ext[i], H, W, 'depth')
-                elif i == 1:
-                    for blk in self.block4:
-                        x_ext[i] = blk(x_ext[i], H, W, 'event')
-                elif i == 2:
-                    for blk in self.block4:
-                        x_ext[i] = blk(x_ext[i], H, W, 'lidar')
-                x_ext[i] = self.norm4(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-                outs_ext[i].append(x_ext[i])
-
-            # x4_f = self.concat_conv4(x_ext)
-            x4_f = self.tokenselect([x4_cam] + x_ext, self.extra_score_predictor[3],
+            x_f = self.tokenselect([x3_cam] + x_ext, self.extra_score_predictor[3],
                                     self.prompt_disentangle4) if self.num_modals > 1 else x_ext[0]
+
+            x3_cam, H, W = self.patch_embed4(x3_cam)
+            for blk in self.block4:
+                x3_cam = blk(x3_cam, H, W, 'rgb')
+            x4_cam = self.norm4(x3_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            x4_f, H, W = self.patch_embed4(x_f)
+            for blk in self.block4:
+                x4_f = blk(x4_f, H, W, 'share')
+            x4_f = self.norm4(x4_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            del x_f, x3_cam
+            torch.cuda.empty_cache()
 
             ## ------ rgb & X_share fusion ------ ##
             x4_cam, x4_f = self.FRMs[3](x4_cam, x4_f)
             x_fused = self.FFMs[3](x4_cam, x4_f)
             outs.append(x_fused)
 
-            # ## ------ magic ------ ##
-            # # 计算各个模态特征与x_fused的相似性
-            # sim_r = cosine_similarity(x4_cam, x_fused)
-            # sim_d = cosine_similarity(x_ext[0], x_fused)
-            # sim_e = cosine_similarity(x_ext[1], x_fused)
-            # sim_l = cosine_similarity(x_ext[2], x_fused)
-            #
-            # # 将相似性放入一个张量中，然后进行排序
-            # similarities = torch.stack([sim_r, sim_d, sim_e, sim_l], dim=1)  # [B, 4]
-            # ranked_similarities, indices = similarities.sort(dim=1, descending=True)
-            #
-            # # 获取最强(robust) 和 最弱 (fragile) 的特征
-            # f_rf = get_selected_features(B, indices[:, 0], x4_cam, x_ext[0], x_ext[1], x_ext[2])  # 最强特征
-            # f_fm = get_selected_features(B, indices[:, -1], x4_cam, x_ext[0], x_ext[1], x_ext[2])  # 最弱特征
-            # f_rm1 = get_selected_features(B, indices[:, 1], x4_cam, x_ext[0], x_ext[1], x_ext[2])
-            # f_rm2 = get_selected_features(B, indices[:, 2], x4_cam, x_ext[0], x_ext[1], x_ext[2])
-            #
-            # f_sa = (f_rf + f_fm) / 2.0
-            #
-            # # 剪裁
-            # f_sa = check_nan_inf(f_sa, "f_sa")
-            # f_rm1 = check_nan_inf(f_rm1, "f_rm1")
-            # f_rm2 = check_nan_inf(f_rm2, "f_rm2")
-            # # 语义一致性训练
-            # # 计算剩余特征与 f_sa 的相似性
-            # sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
-            # sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
-            #
-            # loss_c4 = (sim_rm1 + sim_rm2) / 2.0
-
             del x_fused, x4_f
             torch.cuda.empty_cache()
         else:
             outs.append(x4_cam)
 
-        return outs, outs_ext  ######
+        return outs  ######
         # return outs
 
 
@@ -1167,7 +912,7 @@ if __name__ == '__main__':
 
         # 使用混合精度训练
         with autocast():
-            outs, outs2 = model(x)
+            outs = model(x)
             # 假设使用一个简单的损失函数
         #     loss = sum(outs[1:])
         #
@@ -1179,8 +924,5 @@ if __name__ == '__main__':
         # 打印输出的形状
         for out in outs:
             print(out.shape)
-        for out in outs2:
-            print(len(out))
-            for outt in out:
-                print(outt.shape)
+
         # print(outs[1:])
