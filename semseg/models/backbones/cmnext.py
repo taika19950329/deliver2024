@@ -606,10 +606,10 @@ class CMNeXt(nn.Module):
         norm_cfg = dict(type='BN', requires_grad=True)
         # print('backbone cmnext weight_h_ori', weight_h_ori)
 
-        self.concat_conv1 = ConcatAndConv(3 * embed_dims[0], embed_dims[0])  ######
-        self.concat_conv2 = ConcatAndConv(3 * embed_dims[1], embed_dims[1])
-        self.concat_conv3 = ConcatAndConv(3 * embed_dims[2], embed_dims[2])
-        self.concat_conv4 = ConcatAndConv(3 * embed_dims[3], embed_dims[3])
+        # self.concat_conv1 = ConcatAndConv(3 * embed_dims[0], embed_dims[0])  ######
+        # self.concat_conv2 = ConcatAndConv(3 * embed_dims[1], embed_dims[1])
+        # self.concat_conv3 = ConcatAndConv(3 * embed_dims[2], embed_dims[2])
+        # self.concat_conv4 = ConcatAndConv(3 * embed_dims[3], embed_dims[3])
 
         # self.mam_concat_conv1 = ConcatAndConv(2 * embed_dims[0], embed_dims[0])  ######
         # self.mam_concat_conv2 = ConcatAndConv(2 * embed_dims[1], embed_dims[1])
@@ -650,7 +650,7 @@ class CMNeXt(nn.Module):
 
         if self.num_modals > 1:
             self.extra_score_predictor = nn.ModuleList(
-                [PredictorConv(embed_dims[i], self.num_modals) for i in range(len(depths))])
+                [PredictorConv(embed_dims[i], self.num_modals + 1) for i in range(len(depths))])
 
         self.prompt_disentangle1 = Disentangle(embed_dims[0])
         self.prompt_disentangle2 = Disentangle(embed_dims[1])
@@ -672,12 +672,12 @@ class CMNeXt(nn.Module):
                 FFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=nn.BatchNorm2d)])
 
         # 冻结参数debug
-        # for layer in [self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
-        #               self.FRMs, self.FFMs, self.extra_score_predictor,
-        #               self.prompt_disentangle1, self.prompt_disentangle2, self.prompt_disentangle3, self.prompt_disentangle4,
-        #               self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
-        #     for param in layer.parameters():
-        #         param.requires_grad = False
+        for layer in [self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
+                      self.FRMs, self.FFMs, self.extra_score_predictor,
+                      self.prompt_disentangle1, self.prompt_disentangle2, self.prompt_disentangle3, self.prompt_disentangle4,
+                      self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
+            for param in layer.parameters():
+                param.requires_grad = False
 
     def tokenselect(self, x_ext, module, fuse):
         x_scores = module(x_ext)
@@ -723,7 +723,7 @@ class CMNeXt(nn.Module):
                 x_ext[i] = self.norm1(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
             # x1_f = self.concat_conv1(x_ext)
-            x1_f = self.tokenselect(x_ext, self.extra_score_predictor[0],
+            x1_f = self.tokenselect([x1_cam] + x_ext, self.extra_score_predictor[0],
                                    self.prompt_disentangle1) if self.num_modals > 1 else x_ext[0]
 
             ## ------ rgb & X_share fusion ------ ##
@@ -731,38 +731,38 @@ class CMNeXt(nn.Module):
             x_fused = self.FFMs[0](x1_cam, x1_f)
             outs.append(x_fused)
 
-            ## ------ magic ------ ##
-            # 计算各个模态特征与x_fused的相似性
-            sim_r = cosine_similarity(x1_cam, x_fused)
-            sim_d = cosine_similarity(x_ext[0], x_fused)
-            sim_e = cosine_similarity(x_ext[1], x_fused)
-            sim_l = cosine_similarity(x_ext[2], x_fused)
+            # ## ------ magic ------ ##
+            # # 计算各个模态特征与x_fused的相似性
+            # sim_r = cosine_similarity(x1_cam, x_fused)
+            # sim_d = cosine_similarity(x_ext[0], x_fused)
+            # sim_e = cosine_similarity(x_ext[1], x_fused)
+            # sim_l = cosine_similarity(x_ext[2], x_fused)
+            #
+            # # print(sim_r, sim_d, sim_e, sim_l)
+            #
+            # # 将相似性放入一个张量中，然后进行排序
+            # similarities = torch.stack([sim_r, sim_d, sim_e, sim_l], dim=1)  # [B, 4]
+            # ranked_similarities, indices = similarities.sort(dim=1, descending=True)
+            #
+            # # 获取最强(robust) 和 最弱 (fragile) 的特征
+            # f_rf = get_selected_features(B, indices[:, 0], x1_cam, x_ext[0], x_ext[1], x_ext[2])  # 最强特征
+            # f_fm = get_selected_features(B, indices[:, -1], x1_cam, x_ext[0], x_ext[1], x_ext[2])  # 最弱特征
+            # f_rm1 = get_selected_features(B, indices[:, 1], x1_cam, x_ext[0], x_ext[1], x_ext[2])
+            # f_rm2 = get_selected_features(B, indices[:, 2], x1_cam, x_ext[0], x_ext[1], x_ext[2])
+            #
+            # f_sa = (f_rf + f_fm) / 2.0
+            # # 剪裁
+            # f_sa = check_nan_inf(f_sa, "f_sa")
+            # f_rm1 = check_nan_inf(f_rm1, "f_rm1")
+            # f_rm2 = check_nan_inf(f_rm2, "f_rm2")
+            # # 语义一致性训练
+            # # 计算剩余特征与 f_sa 的相似性
+            # sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
+            # sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
+            #
+            # loss_c1 = (sim_rm1 + sim_rm2) / 2.0
 
-            # print(sim_r, sim_d, sim_e, sim_l)
-
-            # 将相似性放入一个张量中，然后进行排序
-            similarities = torch.stack([sim_r, sim_d, sim_e, sim_l], dim=1)  # [B, 4]
-            ranked_similarities, indices = similarities.sort(dim=1, descending=True)
-
-            # 获取最强(robust) 和 最弱 (fragile) 的特征
-            f_rf = get_selected_features(B, indices[:, 0], x1_cam, x_ext[0], x_ext[1], x_ext[2])  # 最强特征
-            f_fm = get_selected_features(B, indices[:, -1], x1_cam, x_ext[0], x_ext[1], x_ext[2])  # 最弱特征
-            f_rm1 = get_selected_features(B, indices[:, 1], x1_cam, x_ext[0], x_ext[1], x_ext[2])
-            f_rm2 = get_selected_features(B, indices[:, 2], x1_cam, x_ext[0], x_ext[1], x_ext[2])
-
-            f_sa = (f_rf + f_fm) / 2.0
-            # 剪裁
-            f_sa = check_nan_inf(f_sa, "f_sa")
-            f_rm1 = check_nan_inf(f_rm1, "f_rm1")
-            f_rm2 = check_nan_inf(f_rm2, "f_rm2")
-            # 语义一致性训练
-            # 计算剩余特征与 f_sa 的相似性
-            sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
-            sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
-
-            loss_c1 = (sim_rm1 + sim_rm2) / 2.0
-
-            del x_fused, x1_f, f_sa, f_rf, f_fm, f_rm1, f_rm2
+            del x_fused, x1_f
             torch.cuda.empty_cache()
         else:
             outs.append(x1_cam)
@@ -794,7 +794,7 @@ class CMNeXt(nn.Module):
                 x_ext[i] = self.norm2(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
             # x2_f = self.concat_conv2(x_ext)
-            x2_f = self.tokenselect(x_ext, self.extra_score_predictor[1],
+            x2_f = self.tokenselect([x2_cam] + x_ext, self.extra_score_predictor[1],
                                     self.prompt_disentangle2) if self.num_modals > 1 else x_ext[0]
 
             ## ------ rgb & X_share fusion ------ ##
@@ -803,38 +803,38 @@ class CMNeXt(nn.Module):
 
             outs.append(x_fused)
 
-            ## ------ magic ------ ##
-            # 计算各个模态特征与x_fused的相似性
-            sim_r = cosine_similarity(x2_cam, x_fused)
-            sim_d = cosine_similarity(x_ext[0], x_fused)
-            sim_e = cosine_similarity(x_ext[1], x_fused)
-            sim_l = cosine_similarity(x_ext[2], x_fused)
+            # ## ------ magic ------ ##
+            # # 计算各个模态特征与x_fused的相似性
+            # sim_r = cosine_similarity(x2_cam, x_fused)
+            # sim_d = cosine_similarity(x_ext[0], x_fused)
+            # sim_e = cosine_similarity(x_ext[1], x_fused)
+            # sim_l = cosine_similarity(x_ext[2], x_fused)
+            #
+            # # 将相似性放入一个张量中，然后进行排序
+            # similarities = torch.stack([sim_r, sim_d, sim_e, sim_l], dim=1)  # [B, 4]
+            # ranked_similarities, indices = similarities.sort(dim=1, descending=True)
+            #
+            # # 获取最强(robust) 和 最弱 (fragile) 的特征
+            # f_rf = get_selected_features(B, indices[:, 0], x2_cam, x_ext[0], x_ext[1], x_ext[2])  # 最强特征
+            # f_fm = get_selected_features(B, indices[:, -1], x2_cam, x_ext[0], x_ext[1], x_ext[2])  # 最弱特征
+            # f_rm1 = get_selected_features(B, indices[:, 1], x2_cam, x_ext[0], x_ext[1], x_ext[2])
+            # f_rm2 = get_selected_features(B, indices[:, 2], x2_cam, x_ext[0], x_ext[1], x_ext[2])
+            #
+            # # mam
+            # f_sa = (f_rf + f_fm) / 2.0
+            #
+            # # 剪裁
+            # f_sa = check_nan_inf(f_sa, "f_sa")
+            # f_rm1 = check_nan_inf(f_rm1, "f_rm1")
+            # f_rm2 = check_nan_inf(f_rm2, "f_rm2")
+            # # 语义一致性训练
+            # # 计算剩余特征与 f_sa 的相似性
+            # sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
+            # sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
+            #
+            # loss_c2 = (sim_rm1 + sim_rm2) / 2.0
 
-            # 将相似性放入一个张量中，然后进行排序
-            similarities = torch.stack([sim_r, sim_d, sim_e, sim_l], dim=1)  # [B, 4]
-            ranked_similarities, indices = similarities.sort(dim=1, descending=True)
-
-            # 获取最强(robust) 和 最弱 (fragile) 的特征
-            f_rf = get_selected_features(B, indices[:, 0], x2_cam, x_ext[0], x_ext[1], x_ext[2])  # 最强特征
-            f_fm = get_selected_features(B, indices[:, -1], x2_cam, x_ext[0], x_ext[1], x_ext[2])  # 最弱特征
-            f_rm1 = get_selected_features(B, indices[:, 1], x2_cam, x_ext[0], x_ext[1], x_ext[2])
-            f_rm2 = get_selected_features(B, indices[:, 2], x2_cam, x_ext[0], x_ext[1], x_ext[2])
-
-            # mam
-            f_sa = (f_rf + f_fm) / 2.0
-
-            # 剪裁
-            f_sa = check_nan_inf(f_sa, "f_sa")
-            f_rm1 = check_nan_inf(f_rm1, "f_rm1")
-            f_rm2 = check_nan_inf(f_rm2, "f_rm2")
-            # 语义一致性训练
-            # 计算剩余特征与 f_sa 的相似性
-            sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
-            sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
-
-            loss_c2 = (sim_rm1 + sim_rm2) / 2.0
-
-            del x_fused, x2_f, f_sa, f_rf, f_fm, f_rm1, f_rm2
+            del x_fused, x2_f
             torch.cuda.empty_cache()
         else:
             outs.append(x2_cam)
@@ -866,7 +866,7 @@ class CMNeXt(nn.Module):
                 x_ext[i] = self.norm3(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
             # x3_f = self.concat_conv3(x_ext)
-            x3_f = self.tokenselect(x_ext, self.extra_score_predictor[2],
+            x3_f = self.tokenselect([x3_cam] + x_ext, self.extra_score_predictor[2],
                                     self.prompt_disentangle3) if self.num_modals > 1 else x_ext[0]
 
             ## ------ rgb & X_share fusion ------ ##
@@ -874,37 +874,37 @@ class CMNeXt(nn.Module):
             x_fused = self.FFMs[2](x3_cam, x3_f)
             outs.append(x_fused)
 
-            ## ------ magic ------ ##
-            # 计算各个模态特征与x_fused的相似性
-            sim_r = cosine_similarity(x3_cam, x_fused)
-            sim_d = cosine_similarity(x_ext[0], x_fused)
-            sim_e = cosine_similarity(x_ext[1], x_fused)
-            sim_l = cosine_similarity(x_ext[2], x_fused)
+            # ## ------ magic ------ ##
+            # # 计算各个模态特征与x_fused的相似性
+            # sim_r = cosine_similarity(x3_cam, x_fused)
+            # sim_d = cosine_similarity(x_ext[0], x_fused)
+            # sim_e = cosine_similarity(x_ext[1], x_fused)
+            # sim_l = cosine_similarity(x_ext[2], x_fused)
+            #
+            # # 将相似性放入一个张量中，然后进行排序
+            # similarities = torch.stack([sim_r, sim_d, sim_e, sim_l], dim=1)  # [B, 4]
+            # ranked_similarities, indices = similarities.sort(dim=1, descending=True)
+            #
+            # # 获取最强(robust) 和 最弱 (fragile) 的特征
+            # f_rf = get_selected_features(B, indices[:, 0], x3_cam, x_ext[0], x_ext[1], x_ext[2])  # 最强特征
+            # f_fm = get_selected_features(B, indices[:, -1], x3_cam, x_ext[0], x_ext[1], x_ext[2])  # 最弱特征
+            # f_rm1 = get_selected_features(B, indices[:, 1], x3_cam, x_ext[0], x_ext[1], x_ext[2])
+            # f_rm2 = get_selected_features(B, indices[:, 2], x3_cam, x_ext[0], x_ext[1], x_ext[2])
+            #
+            # f_sa = (f_rf + f_fm) / 2.0
+            #
+            # # 剪裁
+            # f_sa = check_nan_inf(f_sa, "f_sa")
+            # f_rm1 = check_nan_inf(f_rm1, "f_rm1")
+            # f_rm2 = check_nan_inf(f_rm2, "f_rm2")
+            # # 语义一致性训练
+            # # 计算剩余特征与 f_sa 的相似性
+            # sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
+            # sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
+            #
+            # loss_c3 = (sim_rm1 + sim_rm2) / 2.0
 
-            # 将相似性放入一个张量中，然后进行排序
-            similarities = torch.stack([sim_r, sim_d, sim_e, sim_l], dim=1)  # [B, 4]
-            ranked_similarities, indices = similarities.sort(dim=1, descending=True)
-
-            # 获取最强(robust) 和 最弱 (fragile) 的特征
-            f_rf = get_selected_features(B, indices[:, 0], x3_cam, x_ext[0], x_ext[1], x_ext[2])  # 最强特征
-            f_fm = get_selected_features(B, indices[:, -1], x3_cam, x_ext[0], x_ext[1], x_ext[2])  # 最弱特征
-            f_rm1 = get_selected_features(B, indices[:, 1], x3_cam, x_ext[0], x_ext[1], x_ext[2])
-            f_rm2 = get_selected_features(B, indices[:, 2], x3_cam, x_ext[0], x_ext[1], x_ext[2])
-
-            f_sa = (f_rf + f_fm) / 2.0
-
-            # 剪裁
-            f_sa = check_nan_inf(f_sa, "f_sa")
-            f_rm1 = check_nan_inf(f_rm1, "f_rm1")
-            f_rm2 = check_nan_inf(f_rm2, "f_rm2")
-            # 语义一致性训练
-            # 计算剩余特征与 f_sa 的相似性
-            sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
-            sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
-
-            loss_c3 = (sim_rm1 + sim_rm2) / 2.0
-
-            del x_fused, x3_f, f_sa, f_rf, f_fm, f_rm1, f_rm2
+            del x_fused, x3_f
             torch.cuda.empty_cache()
         else:
             outs.append(x3_cam)
@@ -936,7 +936,7 @@ class CMNeXt(nn.Module):
                 x_ext[i] = self.norm4(x_ext[i]).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
             # x4_f = self.concat_conv4(x_ext)
-            x4_f = self.tokenselect(x_ext, self.extra_score_predictor[3],
+            x4_f = self.tokenselect([x4_cam] + x_ext, self.extra_score_predictor[3],
                                     self.prompt_disentangle4) if self.num_modals > 1 else x_ext[0]
 
             ## ------ rgb & X_share fusion ------ ##
@@ -944,42 +944,42 @@ class CMNeXt(nn.Module):
             x_fused = self.FFMs[3](x4_cam, x4_f)
             outs.append(x_fused)
 
-            ## ------ magic ------ ##
-            # 计算各个模态特征与x_fused的相似性
-            sim_r = cosine_similarity(x4_cam, x_fused)
-            sim_d = cosine_similarity(x_ext[0], x_fused)
-            sim_e = cosine_similarity(x_ext[1], x_fused)
-            sim_l = cosine_similarity(x_ext[2], x_fused)
+            # ## ------ magic ------ ##
+            # # 计算各个模态特征与x_fused的相似性
+            # sim_r = cosine_similarity(x4_cam, x_fused)
+            # sim_d = cosine_similarity(x_ext[0], x_fused)
+            # sim_e = cosine_similarity(x_ext[1], x_fused)
+            # sim_l = cosine_similarity(x_ext[2], x_fused)
+            #
+            # # 将相似性放入一个张量中，然后进行排序
+            # similarities = torch.stack([sim_r, sim_d, sim_e, sim_l], dim=1)  # [B, 4]
+            # ranked_similarities, indices = similarities.sort(dim=1, descending=True)
+            #
+            # # 获取最强(robust) 和 最弱 (fragile) 的特征
+            # f_rf = get_selected_features(B, indices[:, 0], x4_cam, x_ext[0], x_ext[1], x_ext[2])  # 最强特征
+            # f_fm = get_selected_features(B, indices[:, -1], x4_cam, x_ext[0], x_ext[1], x_ext[2])  # 最弱特征
+            # f_rm1 = get_selected_features(B, indices[:, 1], x4_cam, x_ext[0], x_ext[1], x_ext[2])
+            # f_rm2 = get_selected_features(B, indices[:, 2], x4_cam, x_ext[0], x_ext[1], x_ext[2])
+            #
+            # f_sa = (f_rf + f_fm) / 2.0
+            #
+            # # 剪裁
+            # f_sa = check_nan_inf(f_sa, "f_sa")
+            # f_rm1 = check_nan_inf(f_rm1, "f_rm1")
+            # f_rm2 = check_nan_inf(f_rm2, "f_rm2")
+            # # 语义一致性训练
+            # # 计算剩余特征与 f_sa 的相似性
+            # sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
+            # sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
+            #
+            # loss_c4 = (sim_rm1 + sim_rm2) / 2.0
 
-            # 将相似性放入一个张量中，然后进行排序
-            similarities = torch.stack([sim_r, sim_d, sim_e, sim_l], dim=1)  # [B, 4]
-            ranked_similarities, indices = similarities.sort(dim=1, descending=True)
-
-            # 获取最强(robust) 和 最弱 (fragile) 的特征
-            f_rf = get_selected_features(B, indices[:, 0], x4_cam, x_ext[0], x_ext[1], x_ext[2])  # 最强特征
-            f_fm = get_selected_features(B, indices[:, -1], x4_cam, x_ext[0], x_ext[1], x_ext[2])  # 最弱特征
-            f_rm1 = get_selected_features(B, indices[:, 1], x4_cam, x_ext[0], x_ext[1], x_ext[2])
-            f_rm2 = get_selected_features(B, indices[:, 2], x4_cam, x_ext[0], x_ext[1], x_ext[2])
-
-            f_sa = (f_rf + f_fm) / 2.0
-
-            # 剪裁
-            f_sa = check_nan_inf(f_sa, "f_sa")
-            f_rm1 = check_nan_inf(f_rm1, "f_rm1")
-            f_rm2 = check_nan_inf(f_rm2, "f_rm2")
-            # 语义一致性训练
-            # 计算剩余特征与 f_sa 的相似性
-            sim_rm1 = F.smooth_l1_loss(f_rm1, f_sa)
-            sim_rm2 = F.smooth_l1_loss(f_rm2, f_sa)
-
-            loss_c4 = (sim_rm1 + sim_rm2) / 2.0
-
-            del x_fused, x4_f, f_sa, f_rf, f_fm, f_rm1, f_rm2
+            del x_fused, x4_f
             torch.cuda.empty_cache()
         else:
             outs.append(x4_cam)
 
-        return outs, loss_c1, loss_c2, loss_c3, loss_c4  ######
+        return outs  ######
         # return outs
 
 
@@ -1170,6 +1170,6 @@ if __name__ == '__main__':
         # scaler.update()
 
         # 打印输出的形状
-        for y in outs[0]:
-            print(y.shape)
-        print(outs[1:])
+        for out in outs:
+            print(out.shape)
+        # print(outs[1:])
