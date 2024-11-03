@@ -546,7 +546,13 @@ class CMNeXt(nn.Module):
         if self.num_modals > 0:
             self.extra_downsample_layers = nn.ModuleList([
                 PatchEmbedParallel(3, embed_dims[0], 7, 4, 7 // 2, self.num_modals),
-                *[PatchEmbedParallel(embed_dims[i], embed_dims[i + 1], 3, 2, 3 // 2, self.num_modals) for i in range(3)]
+                *[PatchEmbedParallel(embed_dims[i], embed_dims[i + 1], 3, 2, 3 // 2, self.num_modals) for i in range(2)]
+            ])
+
+        if self.num_modals > 0:
+            self.extra_downsample_layers_rgb = nn.ModuleList([
+                PatchEmbedParallel(3, embed_dims[0], 7, 4, 7 // 2, 1),
+                *[PatchEmbedParallel(embed_dims[i], embed_dims[i + 1], 3, 2, 3 // 2, 1) for i in range(3)]
             ])
 
         if self.num_modals > 1:
@@ -612,10 +618,8 @@ class CMNeXt(nn.Module):
                 x1_f = blk(x1_f, H, W, 'share')
             x1_f = self.norm1(x1_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-            x_cam, H, W = self.patch_embed1(x_cam)
-            for blk in self.block1:
-                x_cam = blk(x_cam, H, W, 'rgb')
-            x1_cam = self.norm1(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+            x1_cam, H, W = self.extra_downsample_layers_rgb[0]([x_cam])
+            x1_cam = x1_cam[0]
 
             x_ext, _, _ = self.extra_downsample_layers[0](x_ext)
             x_ext = [x_ + x1_f for x_ in x_ext] if self.num_modals > 1 else [x1_f]
@@ -642,15 +646,13 @@ class CMNeXt(nn.Module):
             x_f = self.tokenselect([x1_cam] + x_ext, self.extra_score_predictor[1],
                                     self.prompt_disentangle2) if self.num_modals > 1 else x_ext[0]
 
-            x1_cam, H, W = self.patch_embed2(x1_cam)
-            for blk in self.block2:
-                x1_cam = blk(x1_cam, H, W, 'rgb')
-            x2_cam = self.norm2(x1_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
             x2_f, H, W = self.patch_embed2(x_f)
             for blk in self.block2:
                 x2_f = blk(x2_f, H, W, 'share')
             x2_f = self.norm2(x2_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            x2_cam, H, W = self.extra_downsample_layers_rgb[1]([x1_cam])
+            x2_cam = x2_cam[0]
 
             x_ext, _, _ = self.extra_downsample_layers[1](x_ext)
             x_ext = [x_ + x2_f for x_ in x_ext] if self.num_modals > 1 else [x2_f]
@@ -674,21 +676,19 @@ class CMNeXt(nn.Module):
             x_f = self.tokenselect([x2_cam] + x_ext, self.extra_score_predictor[2],
                                     self.prompt_disentangle3) if self.num_modals > 1 else x_ext[0]
 
-            x2_cam, H, W = self.patch_embed3(x2_cam)
-            for blk in self.block3:
-                x2_cam = blk(x2_cam, H, W, 'rgb')
-            x3_cam = self.norm3(x2_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
             x3_f, H, W = self.patch_embed3(x_f)
             for blk in self.block3:
                 x3_f = blk(x3_f, H, W, 'share')
             x3_f = self.norm3(x3_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-            del x_f, x2_cam
-            torch.cuda.empty_cache()
+            x3_cam, H, W = self.extra_downsample_layers_rgb[2]([x2_cam])
+            x3_cam = x3_cam[0]
 
             x_ext, _, _ = self.extra_downsample_layers[2](x_ext)
             x_ext = [x_ + x3_f for x_ in x_ext] if self.num_modals > 1 else [x3_f]
+
+            del x_f, x2_cam
+            torch.cuda.empty_cache()
 
             ## ------ rgb & X_share fusion ------ ##
             x3_cam, x3_f = self.FRMs[2](x3_cam, x3_f)
@@ -708,15 +708,13 @@ class CMNeXt(nn.Module):
             x_f = self.tokenselect([x3_cam] + x_ext, self.extra_score_predictor[3],
                                     self.prompt_disentangle4) if self.num_modals > 1 else x_ext[0]
 
-            x3_cam, H, W = self.patch_embed4(x3_cam)
-            for blk in self.block4:
-                x3_cam = blk(x3_cam, H, W, 'rgb')
-            x4_cam = self.norm4(x3_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
-
             x4_f, H, W = self.patch_embed4(x_f)
             for blk in self.block4:
                 x4_f = blk(x4_f, H, W, 'share')
             x4_f = self.norm4(x4_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
+            x4_cam, H, W = self.extra_downsample_layers_rgb[3]([x3_cam])
+            x4_cam = x4_cam[0]
 
             del x_f, x3_cam
             torch.cuda.empty_cache()
