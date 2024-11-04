@@ -77,7 +77,7 @@ def evaluate(model, dataloader, device):
         if sliding:
             preds = sliding_predict(model, images, num_classes=n_classes).softmax(dim=1)
         else:
-            preds = model(images)[0].softmax(dim=1)  #######
+            preds = model(images).softmax(dim=1)  #######
         metrics.update(preds, labels)
 
     ious, miou = metrics.compute_iou()
@@ -146,8 +146,9 @@ def main(cfg):
         # --- test set
         # dataset = eval(cfg['DATASET']['NAME'])(cfg['DATASET']['ROOT'], 'test', transform, cfg['DATASET']['MODALS'], case)
 
-        model = eval(cfg['MODEL']['NAME'])(256, cfg['MODEL']['BACKBONE'], dataset.n_classes, cfg['DATASET']['MODALS'])
-        msg = model.load_state_dict(torch.load(str(model_path), map_location='cpu')['model_state_dict'])  ######
+        model = eval(cfg['MODEL']['NAME'])(cfg['MODEL']['BACKBONE'], dataset.n_classes, cfg['DATASET']['MODALS'])
+        # msg = model.load_state_dict(torch.load(str(model_path), map_location='cpu')['model_state_dict'])  ######
+        msg = model.load_state_dict(torch.load(str(model_path), map_location='cpu'))
         print(msg)
         model = model.to(device)
         sampler_val = None

@@ -36,12 +36,12 @@ def load_dualpath_model(model, model_file):
 
 
 class BaseModel(nn.Module):
-    def __init__(self, weight_h_ori, backbone: str = 'MiT-B0', num_classes: int = 19,
+    def __init__(self, backbone: str = 'MiT-B0', num_classes: int = 19,
                  modals: list = ['rgb', 'depth', 'event', 'lidar']) -> None:
         super().__init__()
         backbone, variant = backbone.split('-')
         # print("base model weight_h_ori", weight_h_ori)
-        self.backbone = eval(backbone)(weight_h_ori, variant, modals)
+        self.backbone = eval(backbone)(variant, modals)
         # self.backbone = eval(backbone)(variant)
         self.modals = modals
 

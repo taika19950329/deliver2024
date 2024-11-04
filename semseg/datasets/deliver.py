@@ -83,7 +83,7 @@ class DELIVER(Dataset):
         sample['img'] = io.read_image(rgb)[:3, ...]
         H, W = sample['img'].shape[1:]
         if 'depth' in self.modals:
-            sample['depth'] = self._open_img(x1) * 0.0
+            sample['depth'] = self._open_img(x1)
 
         if 'lidar' in self.modals:
             sample['lidar'] = self._open_img(x2)
@@ -91,6 +91,10 @@ class DELIVER(Dataset):
         if 'event' in self.modals:
             eimg = self._open_img(x3)
             sample['event'] = TF.resize(eimg, (H, W), TF.InterpolationMode.NEAREST)
+
+        # for modal in ['depth', 'lidar', 'event']:
+        #     if modal in sample and torch.rand(1).item() < 0.2:  # 50% chance to set to zero
+        #         sample[modal] = torch.zeros_like(sample[modal])
             # # 计算直方图
             # hist, bin_edges = torch.histogram(sample['event'].flatten().float(), bins=30)
             #

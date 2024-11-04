@@ -42,7 +42,7 @@ def main(cfg, gpu, save_dir):
     trainset = eval(dataset_cfg['NAME'])(dataset_cfg['ROOT'], 'train', traintransform, dataset_cfg['MODALS'])
     valset = eval(dataset_cfg['NAME'])(dataset_cfg['ROOT'], 'val', valtransform, dataset_cfg['MODALS'])
     class_names = trainset.CLASSES
-    model = eval(model_cfg['NAME'])(256, model_cfg['BACKBONE'], trainset.n_classes, dataset_cfg['MODALS'])  #######
+    model = eval(model_cfg['NAME'])(model_cfg['BACKBONE'], trainset.n_classes, dataset_cfg['MODALS'])  #######
     resume_checkpoint = None
     if os.path.isfile(resume_path):
         resume_checkpoint = torch.load(resume_path, map_location=torch.device('cpu'))
@@ -51,6 +51,18 @@ def main(cfg, gpu, save_dir):
         logger.info(msg)
     else:
         model.init_pretrained(model_cfg['PRETRAINED'])
+
+        # for name, param in model.named_parameters():
+            # if (('patch_embed' in name.split(".")[1]) or ('block' in name.split(".")[1])) and (
+            #         'extra' not in name.split(".")[1]) \
+            #         and ('lora' not in name.split(".")[1]):
+            #     param.requires_grad = False
+            # else:
+            #     param.requires_grad = True
+            # if 'lora' in name:
+            #     param.requires_grad = True
+            # print(f"Layer: {name} | Size: {param.size()} | Requires Grad: {param.requires_grad}")
+    # raise Exception
     model = model.to(device)
     
     iters_per_epoch = len(trainset) // train_cfg['BATCH_SIZE'] // gpus
@@ -106,8 +118,8 @@ def main(cfg, gpu, save_dir):
             lbl = lbl.to(device)
             
             with autocast(enabled=train_cfg['AMP']):
-                logits, moe_loss1, moe_loss2, moe_loss3, moe_loss4 = model(sample)   #######
-                loss = loss_fn(logits, lbl) + 0.25*moe_loss1 + 0.25*moe_loss2 + 0.25*moe_loss3 + 0.25*moe_loss4
+                logits = model(sample)   #######
+                loss = loss_fn(logits, lbl)
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
