@@ -864,37 +864,41 @@ class CMNeXt(nn.Module):
         self.block1 = nn.ModuleList([Block(embed_dims[0], 1, 8, dpr[cur + i]) for i in range(depths[0])])
         self.norm1 = nn.LayerNorm(embed_dims[0])
         if self.num_modals > 0:
-            self.extra_block1 = nn.ModuleList(
-                [MSPABlock(embed_dims[0], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[0])])  # --- MSPABlock
-            self.extra_norm1 = ConvLayerNorm(embed_dims[0])
+            # self.extra_block1 = nn.ModuleList(
+            #     [MSPABlock(embed_dims[0], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
+            #      range(extra_depths[0])])  # --- MSPABlock
+            self.extra_block1 = nn.ModuleList([Block(embed_dims[0], 1, 8, dpr[cur + i]) for i in range(depths[0])])
+            self.extra_norm1 = nn.LayerNorm(embed_dims[0])  # ConvLayerNorm(embed_dims[0])
 
         cur += depths[0]
         self.block2 = nn.ModuleList([Block(embed_dims[1], 2, 4, dpr[cur + i]) for i in range(depths[1])])
         self.norm2 = nn.LayerNorm(embed_dims[1])
         if self.num_modals > 0:
-            self.extra_block2 = nn.ModuleList(
-                [MSPABlock(embed_dims[1], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[1])])
-            self.extra_norm2 = ConvLayerNorm(embed_dims[1])
+            # self.extra_block2 = nn.ModuleList(
+            #     [MSPABlock(embed_dims[1], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
+            #      range(extra_depths[1])])
+            self.extra_block2 = nn.ModuleList([Block(embed_dims[1], 2, 4, dpr[cur + i]) for i in range(depths[1])])
+            self.extra_norm2 = nn.LayerNorm(embed_dims[1])  # ConvLayerNorm(embed_dims[1])
 
         cur += depths[1]
         self.block3 = nn.ModuleList([Block(embed_dims[2], 5, 2, dpr[cur + i]) for i in range(depths[2])])
         self.norm3 = nn.LayerNorm(embed_dims[2])
         if self.num_modals > 0:
-            self.extra_block3 = nn.ModuleList(
-                [MSPABlock(embed_dims[2], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[2])])
-            self.extra_norm3 = ConvLayerNorm(embed_dims[2])
+            # self.extra_block3 = nn.ModuleList(
+            #     [MSPABlock(embed_dims[2], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
+            #      range(extra_depths[2])])
+            self.extra_block3 = nn.ModuleList([Block(embed_dims[2], 5, 2, dpr[cur + i]) for i in range(depths[2])])
+            self.extra_norm3 = nn.LayerNorm(embed_dims[2])  # ConvLayerNorm(embed_dims[2])
 
         cur += depths[2]
         self.block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
         self.norm4 = nn.LayerNorm(embed_dims[3])
         if self.num_modals > 0:
-            self.extra_block4 = nn.ModuleList(
-                [MSPABlock(embed_dims[3], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[3])])
-            self.extra_norm4 = ConvLayerNorm(embed_dims[3])
+            # self.extra_block4 = nn.ModuleList(
+            #     [MSPABlock(embed_dims[3], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
+            #      range(extra_depths[3])])
+            self.extra_block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
+            self.extra_norm4 = nn.LayerNorm(embed_dims[3])  # ConvLayerNorm(embed_dims[3])
 
         if self.num_modals > 0:
             num_heads = [1, 2, 5, 8]
@@ -910,12 +914,12 @@ class CMNeXt(nn.Module):
                 FFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=nn.BatchNorm2d)])
 
         # 冻结参数debug
-        # for layer in [self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
-        #               self.FRMs, self.FFMs,
-        #               self.extra_block1, self.extra_block2, self.extra_block3, self.extra_block4,
-        #               self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
-        #     for param in layer.parameters():
-        #         param.requires_grad = False
+        for layer in [self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
+                      self.FRMs, self.FFMs,
+                      self.extra_block1, self.extra_block2, self.extra_block3, self.extra_block4,
+                      self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
+            for param in layer.parameters():
+                param.requires_grad = False
 
     def tokenselect(self, x_ext, module):
         x_scores = module(x_ext)
@@ -935,12 +939,15 @@ class CMNeXt(nn.Module):
         for blk in self.block1:
             x_cam = blk(x_cam, H, W)
         x1_cam = self.norm1(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
         if self.num_modals > 0:
             x_ext, _, _ = self.extra_downsample_layers[0](x_ext)
             x_f = self.tokenselect(x_ext, self.extra_score_predictor[0]) if self.num_modals > 1 else x_ext[0]
+            x_f = x_f.flatten(2).permute(0, 2, 1)
             for blk in self.extra_block1:
-                x_f = blk(x_f)
-            x1_f = self.extra_norm1(x_f)
+                x_f = blk(x_f, H, W)
+            x1_f = self.extra_norm1(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+
             x1_cam, x1_f = self.FRMs[0](x1_cam, x1_f)
             x_fused = self.FFMs[0](x1_cam, x1_f)
             outs.append(x_fused)
@@ -957,10 +964,11 @@ class CMNeXt(nn.Module):
         if self.num_modals > 0:
             x_ext, _, _ = self.extra_downsample_layers[1](x_ext)
             x_f = self.tokenselect(x_ext, self.extra_score_predictor[1]) if self.num_modals > 1 else x_ext[0]
+            x_f = x_f.flatten(2).permute(0, 2, 1)
             for blk in self.extra_block2:
-                x_f = blk(x_f)
+                x_f = blk(x_f, H, W)
+            x2_f = self.extra_norm2(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-            x2_f = self.extra_norm2(x_f)
             x2_cam, x2_f = self.FRMs[1](x2_cam, x2_f)
             x_fused = self.FFMs[1](x2_cam, x2_f)
             outs.append(x_fused)
@@ -977,10 +985,11 @@ class CMNeXt(nn.Module):
         if self.num_modals > 0:
             x_ext, _, _ = self.extra_downsample_layers[2](x_ext)
             x_f = self.tokenselect(x_ext, self.extra_score_predictor[2]) if self.num_modals > 1 else x_ext[0]
+            x_f = x_f.flatten(2).permute(0, 2, 1)
             for blk in self.extra_block3:
-                x_f = blk(x_f)
+                x_f = blk(x_f, H, W)
+            x3_f = self.extra_norm3(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-            x3_f = self.extra_norm3(x_f)
             x3_cam, x3_f = self.FRMs[2](x3_cam, x3_f)
             x_fused = self.FFMs[2](x3_cam, x3_f)
             outs.append(x_fused)
@@ -997,10 +1006,11 @@ class CMNeXt(nn.Module):
         if self.num_modals > 0:
             x_ext, _, _ = self.extra_downsample_layers[3](x_ext)
             x_f = self.tokenselect(x_ext, self.extra_score_predictor[3]) if self.num_modals > 1 else x_ext[0]
+            x_f = x_f.flatten(2).permute(0, 2, 1)
             for blk in self.extra_block4:
-                x_f = blk(x_f)
+                x_f = blk(x_f, H, W)
+            x4_f = self.extra_norm4(x_f).reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
-            x4_f = self.extra_norm4(x_f)
             x4_cam, x4_f = self.FRMs[3](x4_cam, x4_f)
             x_fused = self.FFMs[3](x4_cam, x4_f)
             outs.append(x_fused)
