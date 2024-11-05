@@ -52,16 +52,14 @@ def main(cfg, gpu, save_dir):
     else:
         model.init_pretrained(model_cfg['PRETRAINED'])
 
-        # for name, param in model.named_parameters():
-            # if (('patch_embed' in name.split(".")[1]) or ('block' in name.split(".")[1])) and (
-            #         'extra' not in name.split(".")[1]) \
-            #         and ('lora' not in name.split(".")[1]):
-            #     param.requires_grad = False
-            # else:
-            #     param.requires_grad = True
-            # if 'lora' in name:
-            #     param.requires_grad = True
-            # print(f"Layer: {name} | Size: {param.size()} | Requires Grad: {param.requires_grad}")
+        for name, param in model.named_parameters():
+            if 'block' in name.split(".")[1]:
+                param.requires_grad = False
+            else:
+                param.requires_grad = True
+            if 'lora' in name:
+                param.requires_grad = True
+            print(f"Layer: {name} | Size: {param.size()} | Requires Grad: {param.requires_grad}")
     # raise Exception
     model = model.to(device)
     
