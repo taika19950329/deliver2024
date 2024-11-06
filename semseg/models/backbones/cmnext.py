@@ -627,6 +627,7 @@ from semseg.models.modules.ffm import FeatureFusionModule as FFM
 from semseg.models.modules.ffm import FeatureRectifyModule as FRM
 from semseg.models.modules.ffm import ChannelEmbed
 from semseg.models.modules.mspa import MSPABlock
+from semseg.models.modules.biapter import BimodalFusion
 from semseg.utils.utils import nchw_to_nlc, nlc_to_nchw
 
 
@@ -826,22 +827,6 @@ class Block(nn.Module):
         return x
 
 
-class Fun1(nn.Module):
-    def __init__(self):
-        super(Fun1, self).__init__()
-
-    def forward(self, x, y):
-        # 返回和输入形状一致的全0张量
-        return torch.zeros_like(x)
-
-class Fun2(nn.Module):
-    def __init__(self):
-        super(Fun2, self).__init__()
-
-    def forward(self, x, y):
-        # 返回和输入形状一致的全0张量
-        return torch.zeros_like(x)
-
 
 class DualBlock(nn.Module):
     def __init__(self, dim, head, sr_ratio=1, dpr=0., mlp_ratio=4., drop=0., act_layer=nn.GELU,
@@ -875,8 +860,8 @@ class DualBlock(nn.Module):
                 nn.Sigmoid())
 
         # fusion
-        self.fuse1 = Fun1()
-        self.fuse2 = Fun2()
+        self.fuse1 = BimodalFusion(dim)
+        self.fuse2 = BimodalFusion(dim)
 
     def forward(self, x: Tensor, y: Tensor, B, H, W) -> Tensor:
         x = x + self.drop_path(self.attn(self.norm1(x), H, W))
@@ -1090,12 +1075,12 @@ class CMNeXt(nn.Module):
                 FFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=nn.BatchNorm2d)])
 
         # 冻结参数debug
-        for layer in [self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
-                      self.FRMs, self.FFMs,
-                      # self.extra_block1, self.extra_block2, self.extra_block3, self.extra_block4,
-                      self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
-            for param in layer.parameters():
-                param.requires_grad = False
+        # for layer in [self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
+        #               self.FRMs, self.FFMs,
+        #               # self.extra_block1, self.extra_block2, self.extra_block3, self.extra_block4,
+        #               self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
+        #     for param in layer.parameters():
+        #         param.requires_grad = False
 
     def tokenselect(self, x_ext, module):
         x_scores = module(x_ext)

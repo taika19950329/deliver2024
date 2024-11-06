@@ -90,6 +90,9 @@ def load_dualpath_model(model, model_file):
                 state_dict[k.replace('norm', 'extra_norm')] = v
 
     msg = model.load_state_dict(state_dict, strict=False)
+    # for name, param in model.state_dict().items():
+    #     if name.find('block1') >= 0:
+    #         print(f"Key: {name}, Value Shape: {param}")
     del state_dict
 
 
