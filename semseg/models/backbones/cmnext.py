@@ -630,6 +630,104 @@ from semseg.models.modules.mspa import MSPABlock
 from semseg.utils.utils import nchw_to_nlc, nlc_to_nchw
 
 
+import torch.nn as nn
+import torch.autograd
+from timm.models.layers import DropPath as timDrop
+from mmcv.cnn import build_norm_layer
+
+
+class MSPDWConv(nn.Module):
+    def __init__(self, dim=768):
+        super(MSPDWConv, self).__init__()
+        self.mspdwconv = nn.Conv2d(dim, dim, 3, 1, 1, bias=True, groups=dim)
+
+    def forward(self, x):
+        x = self.mspdwconv(x)
+        return x
+
+
+class MSPMlp(nn.Module):
+    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.msp_fc1 = nn.Conv2d(in_features, hidden_features, 1)
+        self.msp_dwconv = MSPDWConv(hidden_features)
+        self.msp_act = act_layer()
+        self.msp_fc2 = nn.Conv2d(hidden_features, out_features, 1)
+        self.msp_drop = nn.Dropout(drop)
+
+    def forward(self, x):
+        x = self.msp_fc1(x)
+
+        x = self.msp_dwconv(x)
+        x = self.msp_act(x)
+        x = self.msp_drop(x)
+        x = self.msp_fc2(x)
+        x = self.msp_drop(x)
+
+        return x
+
+
+class MSPoolAttention(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        pools = [3, 7, 11]
+        self.msp_conv0 = nn.Conv2d(dim, dim, 7, padding=3, groups=dim)
+        self.msp_pool1 = nn.AvgPool2d(pools[0], stride=1, padding=pools[0] // 2, count_include_pad=False)
+        self.msp_pool2 = nn.AvgPool2d(pools[1], stride=1, padding=pools[1] // 2, count_include_pad=False)
+        self.msp_pool3 = nn.AvgPool2d(pools[2], stride=1, padding=pools[2] // 2, count_include_pad=False)
+        self.msp_conv4 = nn.Conv2d(dim, dim, 1)
+        self.msp_sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        u = x.clone()
+        x_in = self.msp_conv0(x)
+        x_1 = self.msp_pool1(x_in)
+        x_2 = self.msp_pool2(x_in)
+        x_3 = self.msp_pool3(x_in)
+        x_out = self.msp_sigmoid(self.msp_conv4(x_in + x_1 + x_2 + x_3)) * u
+        return x_out + u
+
+
+class MSPABlock(nn.Module):
+    def __init__(self, dim, mlp_ratio=4., drop=0., drop_path=0., act_layer=nn.GELU,
+                 norm_cfg=dict(type='BN', requires_grad=True)):
+        super().__init__()
+        self.msp_norm1 = build_norm_layer(norm_cfg, dim)[1]
+        self.msp_attn = MSPoolAttention(dim)
+        self.msp_drop_path = timDrop(drop_path) if drop_path > 0. else nn.Identity()
+        self.msp_norm2 = build_norm_layer(norm_cfg, dim)[1]
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.msp_mlp = MSPMlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+        layer_scale_init_value = 1e-2
+        self.msp_layer_scale_1 = nn.Parameter(
+            layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+        self.msp_layer_scale_2 = nn.Parameter(
+            layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+
+        self.msp_is_channel_mix = True
+        if self.msp_is_channel_mix:
+            self.msp_avg_pool = nn.AdaptiveAvgPool2d(1)
+            self.msp_c_nets = nn.Sequential(
+                nn.Conv1d(1, 1, kernel_size=3, padding=1, bias=False),
+                nn.Sigmoid())
+
+    def forward(self, x):
+        x = x + self.msp_drop_path(self.msp_layer_scale_1.unsqueeze(-1).unsqueeze(-1) * self.msp_attn(self.msp_norm1(x)))  # 多尺度特征
+
+        if self.msp_is_channel_mix:
+            x_c = self.msp_avg_pool(x)  # H W 做全局的平均池化
+            x_c = self.msp_c_nets(x_c.squeeze(-1).transpose(-1, -2)).transpose(-1, -2).unsqueeze(-1)  # 得到每个通道的权重
+            x_c = x_c.expand_as(x)
+            x_c_mix = x_c * x  # 重新标定，对通道重要性进行建模
+            x_mlp = self.msp_drop_path(self.msp_layer_scale_2.unsqueeze(-1).unsqueeze(-1) * self.msp_mlp(self.msp_norm2(x)))
+            x = x_c_mix + x_mlp
+        else:
+            x = x + self.msp_drop_path(self.msp_layer_scale_2.unsqueeze(-1).unsqueeze(-1) * self.msp_mlp(self.msp_norm2(x)))
+        return x
+
+
 class Attention(nn.Module):
     def __init__(self, dim, head, sr_ratio):
         super().__init__()
@@ -726,6 +824,88 @@ class Block(nn.Module):
         x = x + self.drop_path(self.attn(self.norm1(x), H, W))
         x = x + self.drop_path(self.mlp(self.norm2(x), H, W))
         return x
+
+
+class Fun1(nn.Module):
+    def __init__(self):
+        super(Fun1, self).__init__()
+
+    def forward(self, x, y):
+        # 返回和输入形状一致的全0张量
+        return torch.zeros_like(x)
+
+class Fun2(nn.Module):
+    def __init__(self):
+        super(Fun2, self).__init__()
+
+    def forward(self, x, y):
+        # 返回和输入形状一致的全0张量
+        return torch.zeros_like(x)
+
+
+class DualBlock(nn.Module):
+    def __init__(self, dim, head, sr_ratio=1, dpr=0., mlp_ratio=4., drop=0., act_layer=nn.GELU,
+                 norm_cfg=dict(type='BN', requires_grad=True), is_fan=False):
+        super().__init__()
+        # MHSA
+        self.norm1 = nn.LayerNorm(dim)
+        self.attn = Attention(dim, head, sr_ratio)
+        self.drop_path = DropPath(dpr) if dpr > 0. else nn.Identity()
+        self.norm2 = nn.LayerNorm(dim)
+        self.mlp = MLP(dim, int(dim * 4)) if not is_fan else ChannelProcessing(dim, mlp_hidden_dim=int(dim * 4))
+
+        # MSPA
+        self.msp_norm1 = build_norm_layer(norm_cfg, dim)[1]
+        self.msp_attn = MSPoolAttention(dim)
+        self.msp_drop_path = timDrop(dpr) if dpr > 0. else nn.Identity()
+        self.msp_norm2 = build_norm_layer(norm_cfg, dim)[1]
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.msp_mlp = MSPMlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+        layer_scale_init_value = 1e-2
+        self.msp_layer_scale_1 = nn.Parameter(
+            layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+        self.msp_layer_scale_2 = nn.Parameter(
+            layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+
+        self.msp_is_channel_mix = True
+        if self.msp_is_channel_mix:
+            self.msp_avg_pool = nn.AdaptiveAvgPool2d(1)
+            self.msp_c_nets = nn.Sequential(
+                nn.Conv1d(1, 1, kernel_size=3, padding=1, bias=False),
+                nn.Sigmoid())
+
+        # fusion
+        self.fuse1 = Fun1()
+        self.fuse2 = Fun2()
+
+    def forward(self, x: Tensor, y: Tensor, B, H, W) -> Tensor:
+        x = x + self.drop_path(self.attn(self.norm1(x), H, W))
+        y = y + self.msp_drop_path(self.msp_layer_scale_1.unsqueeze(-1).unsqueeze(-1) * self.msp_attn(self.msp_norm1(y)))  # 多尺度特征
+
+        x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2)
+        fus1 = self.fuse1(x, y)
+        x = x + fus1
+        y = y + fus1
+        x = x.permute(0, 2, 3, 1).reshape(B, H*W, -1)
+
+        x = x + self.drop_path(self.mlp(self.norm2(x), H, W))
+        if self.msp_is_channel_mix:
+            y_c = self.msp_avg_pool(y)  # H W 做全局的平均池化
+            y_c = self.msp_c_nets(y_c.squeeze(-1).transpose(-1, -2)).transpose(-1, -2).unsqueeze(-1)  # 得到每个通道的权重
+            y_c = y_c.expand_as(y)
+            y_c_mix = y_c * y  # 重新标定，对通道重要性进行建模
+            y_mlp = self.msp_drop_path(self.msp_layer_scale_2.unsqueeze(-1).unsqueeze(-1) * self.msp_mlp(self.msp_norm2(y)))
+            y = y_c_mix + y_mlp
+        else:
+            y = y + self.msp_drop_path(self.msp_layer_scale_2.unsqueeze(-1).unsqueeze(-1) * self.msp_mlp(self.msp_norm2(y)))
+
+        x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2)
+        fus2 = self.fuse2(x, y)
+        x = x + fus2
+        y = y + fus2
+        x = x.permute(0, 2, 3, 1).reshape(B, H * W, -1)
+
+        return x, y
 
 
 class ChannelProcessing(nn.Module):
@@ -861,39 +1041,39 @@ class CMNeXt(nn.Module):
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
 
         cur = 0
-        self.block1 = nn.ModuleList([Block(embed_dims[0], 1, 8, dpr[cur + i]) for i in range(depths[0])])
+        self.block1 = nn.ModuleList([DualBlock(embed_dims[0], 1, 8, dpr[cur + i], mlp_ratio=8, norm_cfg=norm_cfg) for i in range(depths[0])])
         self.norm1 = nn.LayerNorm(embed_dims[0])
         if self.num_modals > 0:
-            self.extra_block1 = nn.ModuleList(
-                [MSPABlock(embed_dims[0], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[0])])  # --- MSPABlock
+            # self.extra_block1 = nn.ModuleList(
+            #     [MSPABlock(embed_dims[0], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
+            #      range(extra_depths[0])])  # --- MSPABlock
             self.extra_norm1 = ConvLayerNorm(embed_dims[0])
 
         cur += depths[0]
-        self.block2 = nn.ModuleList([Block(embed_dims[1], 2, 4, dpr[cur + i]) for i in range(depths[1])])
+        self.block2 = nn.ModuleList([DualBlock(embed_dims[1], 2, 4, dpr[cur + i], mlp_ratio=8, norm_cfg=norm_cfg) for i in range(depths[1])])
         self.norm2 = nn.LayerNorm(embed_dims[1])
         if self.num_modals > 0:
-            self.extra_block2 = nn.ModuleList(
-                [MSPABlock(embed_dims[1], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[1])])
+            # self.extra_block2 = nn.ModuleList(
+            #     [MSPABlock(embed_dims[1], mlp_ratio=8, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
+            #      range(extra_depths[1])])
             self.extra_norm2 = ConvLayerNorm(embed_dims[1])
 
         cur += depths[1]
-        self.block3 = nn.ModuleList([Block(embed_dims[2], 5, 2, dpr[cur + i]) for i in range(depths[2])])
+        self.block3 = nn.ModuleList([DualBlock(embed_dims[2], 5, 2, dpr[cur + i], mlp_ratio=4, norm_cfg=norm_cfg) for i in range(depths[2])])
         self.norm3 = nn.LayerNorm(embed_dims[2])
         if self.num_modals > 0:
-            self.extra_block3 = nn.ModuleList(
-                [MSPABlock(embed_dims[2], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[2])])
+            # self.extra_block3 = nn.ModuleList(
+            #     [MSPABlock(embed_dims[2], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
+            #      range(extra_depths[2])])
             self.extra_norm3 = ConvLayerNorm(embed_dims[2])
 
         cur += depths[2]
-        self.block4 = nn.ModuleList([Block(embed_dims[3], 8, 1, dpr[cur + i]) for i in range(depths[3])])
+        self.block4 = nn.ModuleList([DualBlock(embed_dims[3], 8, 1, dpr[cur + i], mlp_ratio=4, norm_cfg=norm_cfg) for i in range(depths[3])])
         self.norm4 = nn.LayerNorm(embed_dims[3])
         if self.num_modals > 0:
-            self.extra_block4 = nn.ModuleList(
-                [MSPABlock(embed_dims[3], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
-                 range(extra_depths[3])])
+            # self.extra_block4 = nn.ModuleList(
+            #     [MSPABlock(embed_dims[3], mlp_ratio=4, drop_path=dpr[cur + i], norm_cfg=norm_cfg) for i in
+            #      range(extra_depths[3])])
             self.extra_norm4 = ConvLayerNorm(embed_dims[3])
 
         if self.num_modals > 0:
@@ -910,12 +1090,12 @@ class CMNeXt(nn.Module):
                 FFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=nn.BatchNorm2d)])
 
         # 冻结参数debug
-        # for layer in [self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
-        #               self.FRMs, self.FFMs,
-        #               self.extra_block1, self.extra_block2, self.extra_block3, self.extra_block4,
-        #               self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
-        #     for param in layer.parameters():
-        #         param.requires_grad = False
+        for layer in [self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
+                      self.FRMs, self.FFMs,
+                      # self.extra_block1, self.extra_block2, self.extra_block3, self.extra_block4,
+                      self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
+            for param in layer.parameters():
+                param.requires_grad = False
 
     def tokenselect(self, x_ext, module):
         x_scores = module(x_ext)
@@ -932,79 +1112,76 @@ class CMNeXt(nn.Module):
         outs = []
         # stage 1
         x_cam, H, W = self.patch_embed1(x_cam)
-        for blk in self.block1:
-            x_cam = blk(x_cam, H, W)
-        x1_cam = self.norm1(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
         if self.num_modals > 0:
             x_ext, _, _ = self.extra_downsample_layers[0](x_ext)
             x_f = self.tokenselect(x_ext, self.extra_score_predictor[0]) if self.num_modals > 1 else x_ext[0]
-            for blk in self.extra_block1:
-                x_f = blk(x_f)
+            for blk in self.block1:
+                x_cam, x_f = blk(x_cam, x_f, B, H, W)
+            x1_cam = self.norm1(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
             x1_f = self.extra_norm1(x_f)
+
             x1_cam, x1_f = self.FRMs[0](x1_cam, x1_f)
             x_fused = self.FFMs[0](x1_cam, x1_f)
             outs.append(x_fused)
             x_ext = [x_.reshape(B, H, W, -1).permute(0, 3, 1, 2) + x1_f for x_ in x_ext] if self.num_modals > 1 else [
                 x1_f]
         else:
+            x1_cam = self.norm1(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
             outs.append(x1_cam)
 
         # stage 2
         x_cam, H, W = self.patch_embed2(x1_cam)
-        for blk in self.block2:
-            x_cam = blk(x_cam, H, W)
-        x2_cam = self.norm2(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
         if self.num_modals > 0:
             x_ext, _, _ = self.extra_downsample_layers[1](x_ext)
             x_f = self.tokenselect(x_ext, self.extra_score_predictor[1]) if self.num_modals > 1 else x_ext[0]
-            for blk in self.extra_block2:
-                x_f = blk(x_f)
-
+            for blk in self.block2:
+                x_cam, x_f = blk(x_cam, x_f, B, H, W)
+            x2_cam = self.norm2(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
             x2_f = self.extra_norm2(x_f)
+
             x2_cam, x2_f = self.FRMs[1](x2_cam, x2_f)
             x_fused = self.FFMs[1](x2_cam, x2_f)
             outs.append(x_fused)
             x_ext = [x_.reshape(B, H, W, -1).permute(0, 3, 1, 2) + x2_f for x_ in x_ext] if self.num_modals > 1 else [
                 x2_f]
         else:
+            x2_cam = self.norm2(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
             outs.append(x2_cam)
 
         # stage 3
         x_cam, H, W = self.patch_embed3(x2_cam)
-        for blk in self.block3:
-            x_cam = blk(x_cam, H, W)
-        x3_cam = self.norm3(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
         if self.num_modals > 0:
             x_ext, _, _ = self.extra_downsample_layers[2](x_ext)
             x_f = self.tokenselect(x_ext, self.extra_score_predictor[2]) if self.num_modals > 1 else x_ext[0]
-            for blk in self.extra_block3:
-                x_f = blk(x_f)
-
+            for blk in self.block3:
+                x_cam, x_f = blk(x_cam, x_f, B, H, W)
             x3_f = self.extra_norm3(x_f)
+            x3_cam = self.norm3(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
+            
             x3_cam, x3_f = self.FRMs[2](x3_cam, x3_f)
             x_fused = self.FFMs[2](x3_cam, x3_f)
             outs.append(x_fused)
             x_ext = [x_.reshape(B, H, W, -1).permute(0, 3, 1, 2) + x3_f for x_ in x_ext] if self.num_modals > 1 else [
                 x3_f]
         else:
+            x3_cam = self.norm3(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
             outs.append(x3_cam)
 
         # stage 4
         x_cam, H, W = self.patch_embed4(x3_cam)
-        for blk in self.block4:
-            x_cam = blk(x_cam, H, W)
-        x4_cam = self.norm4(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
         if self.num_modals > 0:
             x_ext, _, _ = self.extra_downsample_layers[3](x_ext)
             x_f = self.tokenselect(x_ext, self.extra_score_predictor[3]) if self.num_modals > 1 else x_ext[0]
-            for blk in self.extra_block4:
-                x_f = blk(x_f)
-
+            for blk in self.block4:
+                x_cam, x_f = blk(x_cam, x_f, B, H, W)
+            x4_cam = self.norm4(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
             x4_f = self.extra_norm4(x_f)
+
             x4_cam, x4_f = self.FRMs[3](x4_cam, x4_f)
             x_fused = self.FFMs[3](x4_cam, x4_f)
             outs.append(x_fused)
         else:
+            x4_cam = self.norm4(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
             outs.append(x4_cam)
 
         return outs
