@@ -6,6 +6,35 @@ import math
 
 
 # Feature Rectify Module
+import torch
+import torch.nn as nn
+
+
+class BatchWeights(nn.Module):
+    def __init__(self, dim, batch_size, reduction=1):
+        super(BatchWeights, self).__init__()
+        self.b = batch_size
+        self.dim = dim
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+        self.mlp = nn.Sequential(
+                    nn.Linear(self.b * 4, self.b * 4 // reduction),
+                    nn.ReLU(inplace=True),
+                    nn.Linear(self.b * 4 // reduction, self.b * 2),
+                    nn.Sigmoid())
+
+    def forward(self, x1, x2):
+        B, _, H, W = x1.shape
+        x = torch.cat((x1, x2), dim=0)
+        avg = self.avg_pool(x).view(2 * B, self.dim)
+        max = self.max_pool(x).view(2 * B, self.dim)
+        y = torch.cat((avg, max), dim=0) # 4B C
+        y = y.transpose(0, 1)
+        y = self.mlp(y).view(2 * B, self.dim, 1)
+        batch_weights = y.reshape(B, 2, self.dim, 1, 1).permute(1, 0, 2, 3, 4) # 2 B C 1 1
+        return batch_weights
+
+
 class ChannelWeights(nn.Module):
     def __init__(self, dim, reduction=1):
         super(ChannelWeights, self).__init__()
@@ -36,7 +65,7 @@ class SpatialWeights(nn.Module):
         self.mlp = nn.Sequential(
                     nn.Conv2d(self.dim * 2, self.dim // reduction, kernel_size=1),
                     nn.ReLU(inplace=True),
-                    nn.Conv2d(self.dim // reduction, 2, kernel_size=1), 
+                    nn.Conv2d(self.dim // reduction, 2, kernel_size=1),
                     nn.Sigmoid())
 
     def forward(self, x1, x2):
@@ -46,6 +75,8 @@ class SpatialWeights(nn.Module):
         return spatial_weights
 
 
+
+
 class FeatureRectifyModule(nn.Module):
     def __init__(self, dim, reduction=1, lambda_c=.5, lambda_s=.5):
         super(FeatureRectifyModule, self).__init__()
@@ -53,6 +84,9 @@ class FeatureRectifyModule(nn.Module):
         self.lambda_s = lambda_s
         self.channel_weights = ChannelWeights(dim=dim, reduction=reduction)
         self.spatial_weights = SpatialWeights(dim=dim, reduction=reduction)
+
+        # self.lambda_b = lambda_b
+        # self.batch_weights = BatchWeights(dim=dim, batch_size=batch, reduction=reduction)
     
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -72,6 +106,7 @@ class FeatureRectifyModule(nn.Module):
     def forward(self, x1, x2):
         channel_weights = self.channel_weights(x1, x2)
         spatial_weights = self.spatial_weights(x1, x2)
+        # batch_weights = self.batch_weights(x1, x2)
         out_x1 = x1 + self.lambda_c * channel_weights[1] * x2 + self.lambda_s * spatial_weights[1] * x2
         out_x2 = x2 + self.lambda_c * channel_weights[0] * x1 + self.lambda_s * spatial_weights[0] * x1
         return out_x1, out_x2 
