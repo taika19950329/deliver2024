@@ -42,7 +42,7 @@ def main(cfg, gpu, save_dir):
     trainset = eval(dataset_cfg['NAME'])(dataset_cfg['ROOT'], 'train', traintransform, dataset_cfg['MODALS'])
     valset = eval(dataset_cfg['NAME'])(dataset_cfg['ROOT'], 'val', valtransform, dataset_cfg['MODALS'])
     class_names = trainset.CLASSES
-    model = eval(model_cfg['NAME'])(model_cfg['BACKBONE'], trainset.n_classes, dataset_cfg['MODALS'])  #######
+    model = eval(model_cfg['NAME'])(256, model_cfg['BACKBONE'], trainset.n_classes, dataset_cfg['MODALS'])  #######
     resume_checkpoint = None
     if os.path.isfile(resume_path):
         resume_checkpoint = torch.load(resume_path, map_location=torch.device('cpu'))
@@ -94,8 +94,9 @@ def main(cfg, gpu, save_dir):
 
     if (train_cfg['DDP'] and torch.distributed.get_rank() == 0) or (not train_cfg['DDP']):
         writer = SummaryWriter(str(save_dir))
-        # logger.info('================== model complexity =====================')
-        # cal_flops(model, dataset_cfg['MODALS'], logger)
+        logger.info('================== model complexity =====================')
+        cal_flops(model, dataset_cfg['MODALS'], logger)
+        raise Exception
 
         logger.info('================== model structure =====================')
         logger.info(model)

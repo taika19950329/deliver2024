@@ -698,8 +698,17 @@ class MoE_lora_new(nn.Module):
         # z_mean = torch.mean(z, dim=-1)
         # gate_1 = self.shared_expert(x).mean(dim=-1).mean(dim=1)
         # print(gate_1.shape)
-
-        clean_logits = x_mean @ self.w_gate
+        _, height = x_mean.shape
+        _, weight = self.w_gate.shape
+        target_size = (1, height, weight)
+        # print(self.w_gate.shape, target_size)
+        # raise Exception# Specify the target size
+        w_gate_reshaped = self.w_gate.unsqueeze(0).permute(0, 2, 1)
+        w_gate_new = F.interpolate(w_gate_reshaped, size=(height, ), mode='linear',
+                                   align_corners=False)
+        # 去掉批次维度，恢复为 [height, weight] 的形状
+        w_gate_new = w_gate_new.squeeze(0).permute(1, 0)
+        clean_logits = x_mean @ w_gate_new
 
         if self.noisy_gating and train:
             raw_noise_stddev = x_mean @ self.w_noise
@@ -1078,7 +1087,6 @@ if "__main__"==__name__:
     # tensor_1 = [torch.ones(2, 320, 64, 64), torch.ones(2, 320, 64, 64) * 2, torch.ones(2, 320, 64, 64) * 3]
     final_diff_outputs, shared_mean_tensor, total_loss = moe_instance(tensor_1)
     print(len(final_diff_outputs), shared_mean_tensor.shape, total_loss)
-
 
 
 

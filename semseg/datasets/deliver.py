@@ -80,16 +80,16 @@ class DELIVER(Dataset):
         lbl_path = rgb.replace('/img', '/semantic').replace('_rgb', '_semantic')
 
         sample = {}
-        sample['img'] = io.read_image(rgb)[:3, ...]
+        sample['img'] = io.read_image(rgb)[:3, ...] * 0.0
         H, W = sample['img'].shape[1:]
         if 'depth' in self.modals:
-            sample['depth'] = self._open_img(x1)
+            sample['depth'] = self._open_img(x1) * 0.0
 
         if 'lidar' in self.modals:
             sample['lidar'] = self._open_img(x2)
 
         if 'event' in self.modals:
-            eimg = self._open_img(x3)
+            eimg = self._open_img(x3) * 0.0
             sample['event'] = TF.resize(eimg, (H, W), TF.InterpolationMode.NEAREST)
 
         # for modal in ['depth', 'lidar', 'event']:
@@ -123,6 +123,7 @@ class DELIVER(Dataset):
         del sample['mask']
         label = self.encode(label.squeeze().numpy()).long()
         sample = [sample[k] for k in self.modals]
+
         return sample, label
 
     def _open_img(self, file):
