@@ -9,9 +9,9 @@ from fvcore.nn import flop_count_table, FlopCountAnalysis
 
 
 class CMNeXt(BaseModel):
-    def __init__(self, weight_h_ori, backbone: str = 'CMNeXt-B0', num_classes: int = 25,
+    def __init__(self, backbone: str = 'CMNeXt-B0', num_classes: int = 25,
                  modals: list = ['img', 'depth', 'event', 'lidar']) -> None:
-        super().__init__(weight_h_ori, backbone, num_classes, modals)
+        super().__init__(backbone, num_classes, modals)
         # print('base model cmnext weight_h_ori', weight_h_ori)
         self.decode_head = SegFormerHead(self.backbone.channels, 256 if 'B0' in backbone or 'B1' in backbone else 512,
                                          num_classes)
@@ -19,10 +19,11 @@ class CMNeXt(BaseModel):
 
     def forward(self, x: list) -> list:
         # print('base model cmnext forward input', x[0].shape)
-        y, moe_loss1, moe_loss2, moe_loss3, moe_loss4 = self.backbone(x)
+        # y, moe_loss1, moe_loss2, moe_loss3, moe_loss4 = self.backbone(x)
+        y = self.backbone(x)
         y = self.decode_head(y)
         y = F.interpolate(y, size=x[0].shape[2:], mode='bilinear', align_corners=False)
-        return y, moe_loss1, moe_loss2, moe_loss3, moe_loss4
+        return y
 
     def init_pretrained(self, pretrained: str = None) -> None:
         if pretrained:
@@ -89,15 +90,16 @@ def load_dualpath_model(model, model_file):
                 state_dict[k.replace('norm', 'extra_norm')] = v
 
     msg = model.load_state_dict(state_dict, strict=False)
+    # for name, param in model.state_dict().items():
+    #     if name.find('block1') >= 0:
+    #         print(f"Key: {name}, Value Shape: {param}")
     del state_dict
 
 
 if __name__ == '__main__':
     modals = ['img', 'depth', 'event', 'lidar']
-    x = [torch.zeros(2, 3, 512, 512), torch.ones(2, 3, 512, 512), torch.ones(2, 3, 512, 512) * 2,
-         torch.ones(2, 3, 512, 512) * 3]
-    model = CMNeXt(int(x[0].shape[2] / 4), 'CMNeXt-B2', 25, modals)
+    x = [torch.zeros(1, 3, 1024, 1024), torch.ones(1, 3, 1024, 1024), torch.ones(1, 3, 1024, 1024)*2, torch.ones(1, 3, 1024, 1024) *3]
+    model = CMNeXt('CMNeXt-B2', 25, modals)
     model.init_pretrained('/home/yi/Documents/DELIVER/checkpoints/pretrained/segformer/mit_b2.pth')
-    y, moe_loss = model(x)
+    y = model(x)
     print(y.shape)
-    print(moe_loss)

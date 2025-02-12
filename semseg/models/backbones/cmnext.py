@@ -273,11 +273,11 @@ class DualBlock(nn.Module):
             y = y + self.msp_drop_path(
                 self.msp_layer_scale_2.unsqueeze(-1).unsqueeze(-1) * self.msp_mlp(self.msp_norm2(y)))
 
-        y = y.permute(0, 2, 3, 1).reshape(B, H * W, -1)
-        fuse = self.fuse1(x, y)
-        x = x + fuse
-        y = y + fuse
-        y = y.reshape(B, H, W, -1).permute(0, 3, 1, 2)
+        # y = y.permute(0, 2, 3, 1).reshape(B, H * W, -1)
+        # fuse = self.fuse1(x, y)
+        # x = x + fuse
+        # y = y + fuse
+        # y = y.reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
         return x, y
 

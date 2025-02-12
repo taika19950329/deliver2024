@@ -72,35 +72,75 @@ def evaluate(model, dataloader, device):
     acc, macc = metrics.compute_pixel_acc()
     f1, mf1 = metrics.compute_f1()
     return acc, macc, f1, mf1, ious, miou
+# @torch.no_grad()
+# def evaluate_msf(model, dataloader, device, scales, flip):
+#     model.eval()
+#     n_classes = dataloader.dataset.n_classes
+#     metrics = Metrics(n_classes, dataloader.dataset.ignore_label, device)
+#     for images, labels in tqdm(dataloader):
+#         labels = labels.to(device)
+#         B, H, W = labels.shape
+#         scaled_logits = torch.zeros(B, n_classes, H, W).to(device)
+#         for scale in scales:
+#             new_H, new_W = int(scale * H), int(scale * W)
+#             new_H, new_W = int(math.ceil(new_H / 32)) * 32, int(math.ceil(new_W / 32)) * 32
+#             scaled_images = [F.interpolate(img, size=(new_H, new_W), mode='bilinear', align_corners=True) for img in
+#                              images]
+#             scaled_images = [scaled_img.to(device) for scaled_img in scaled_images]
+#             logits = model(scaled_images)[0]
+#             print(logits.shape, H, W)
+#             raise Exception
+#             logits = F.interpolate(logits, size=(H, W), mode='bilinear', align_corners=True)
+#             scaled_logits += logits.softmax(dim=1)
+#             if flip:
+#                 scaled_images = [torch.flip(scaled_img, dims=(3,)) for scaled_img in scaled_images]
+#                 logits = model(scaled_images)[0]
+#                 logits = torch.flip(logits, dims=(3,))
+#                 logits = F.interpolate(logits, size=(H, W), mode='bilinear', align_corners=True)
+#                 scaled_logits += logits.softmax(dim=1)
+#         metrics.update(scaled_logits, labels)
+#     acc, macc = metrics.compute_pixel_acc()
+#     f1, mf1 = metrics.compute_f1()
+#     ious, miou = metrics.compute_iou()
+#     return acc, macc, f1, mf1, ious, miou
+
+
 @torch.no_grad()
 def evaluate_msf(model, dataloader, device, scales, flip):
     model.eval()
+
     n_classes = dataloader.dataset.n_classes
     metrics = Metrics(n_classes, dataloader.dataset.ignore_label, device)
+
     for images, labels in tqdm(dataloader):
         labels = labels.to(device)
         B, H, W = labels.shape
         scaled_logits = torch.zeros(B, n_classes, H, W).to(device)
+
         for scale in scales:
             new_H, new_W = int(scale * H), int(scale * W)
             new_H, new_W = int(math.ceil(new_H / 32)) * 32, int(math.ceil(new_W / 32)) * 32
             scaled_images = [F.interpolate(img, size=(new_H, new_W), mode='bilinear', align_corners=True) for img in
                              images]
             scaled_images = [scaled_img.to(device) for scaled_img in scaled_images]
-            logits = model(scaled_images)[0]
+            logits = model(scaled_images)
             logits = F.interpolate(logits, size=(H, W), mode='bilinear', align_corners=True)
             scaled_logits += logits.softmax(dim=1)
+
             if flip:
                 scaled_images = [torch.flip(scaled_img, dims=(3,)) for scaled_img in scaled_images]
-                logits = model(scaled_images)[0]
+                logits = model(scaled_images)
                 logits = torch.flip(logits, dims=(3,))
                 logits = F.interpolate(logits, size=(H, W), mode='bilinear', align_corners=True)
                 scaled_logits += logits.softmax(dim=1)
+
         metrics.update(scaled_logits, labels)
+
     acc, macc = metrics.compute_pixel_acc()
     f1, mf1 = metrics.compute_f1()
     ious, miou = metrics.compute_iou()
     return acc, macc, f1, mf1, ious, miou
+
 def main(cfg):
     device = torch.device(cfg['DEVICE'])
     eval_cfg = cfg['EVAL']
@@ -118,7 +158,7 @@ def main(cfg):
         dataset = eval(cfg['DATASET']['NAME'])(cfg['DATASET']['ROOT'], 'val', transform, cfg['DATASET']['MODALS'], case)
         # --- test set
         # dataset = eval(cfg['DATASET']['NAME'])(cfg['DATASET']['ROOT'], 'test', transform, cfg['DATASET']['MODALS'], case)
-        model = eval(cfg['MODEL']['NAME'])(256, cfg['MODEL']['BACKBONE'], dataset.n_classes, cfg['DATASET']['MODALS'])
+        model = eval(cfg['MODEL']['NAME'])(cfg['MODEL']['BACKBONE'], dataset.n_classes, cfg['DATASET']['MODALS'])
         msg = model.load_state_dict(torch.load(str(model_path), map_location='cpu')['model_state_dict'])  ######
         print(msg)
         model = model.to(device)
