@@ -11,6 +11,7 @@ from semseg.models.modules.ffm import ChannelEmbed
 from semseg.models.modules.mspa import MSPABlock
 from semseg.models.modules.biapter import Bi_direct_adapter, Shared_direct_adapter
 from semseg.utils.utils import nchw_to_nlc, nlc_to_nchw
+from semseg.models.modules.BasicBlock import TF_3D
 
 import torch.nn as nn
 import torch.autograd
@@ -722,6 +723,12 @@ class CMNeXt(nn.Module):
         self.prompt_disentangle4 = Disentangle(embed_dims[3])
 
         if self.num_modals > 0:
+            self.fusion1 = TF_3D(embedding_dim=64, volumn_size=256, nhead=4, method="TF")
+            self.fusion2 = TF_3D(embedding_dim=128, volumn_size=128, nhead=4, method="TF")
+            self.fusion3 = TF_3D(embedding_dim=320, volumn_size=64, nhead=4, method="TF")
+            self.fusion4 = TF_3D(embedding_dim=512, volumn_size=32, nhead=4, method="TF")
+
+        if self.num_modals > 0:
             self.extra_downsample_layers = nn.ModuleList([
                 PatchEmbedParallel(3, embed_dims[0], 7, 4, 7 // 2, self.num_modals),
                 *[PatchEmbedParallel(embed_dims[i], embed_dims[i + 1], 3, 2, 3 // 2, self.num_modals) for i in range(3)]
@@ -792,7 +799,7 @@ class CMNeXt(nn.Module):
         # 冻结参数debug
         # for layer in [self.block1, self.block2, self.block3, self.block4, self.norm1, self.norm2, self.norm3, self.norm4,
         #               self.FFMs, self.extra_norm1, self.extra_norm2, self.extra_norm3, self.extra_norm4,
-        #               # self.extra_block1, self.extra_block2, self.extra_block3, self.extra_block4,
+        #               self.fusion1, self.fusion2, self.fusion3, self.fusion4,
         #               self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4]:
         #     for param in layer.parameters():
         #         param.requires_grad = False
@@ -822,8 +829,9 @@ class CMNeXt(nn.Module):
         if self.num_modals > 0:
             x_ext, _, _ = self.extra_downsample_layers[0](x_ext)
             # x_f = self.tokenselect(x_ext, self.extra_score_predictor[0]) if self.num_modals > 1 else x_ext[0]
-            x_f = self.tokenselect(x_ext, self.extra_score_predictor[0],
-                                   self.prompt_disentangle1) if self.num_modals > 1 else x_ext[0]
+            # x_f = self.tokenselect(x_ext, self.extra_score_predictor[0],
+            #                        self.prompt_disentangle1) if self.num_modals > 1 else x_ext[0]
+            x_f = self.fusion1(x_ext)
             for blk in self.block1:
                 x_cam, x_f = blk(x_cam, x_f, B, H, W)
             x1_cam = self.norm1(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
@@ -858,8 +866,9 @@ class CMNeXt(nn.Module):
         if self.num_modals > 0:
             x_ext, _, _ = self.extra_downsample_layers[1](x_ext)
             # x_f = self.tokenselect(x_ext, self.extra_score_predictor[1]) if self.num_modals > 1 else x_ext[0]
-            x_f = self.tokenselect(x_ext, self.extra_score_predictor[1],
-                                   self.prompt_disentangle2) if self.num_modals > 1 else x_ext[0]
+            # x_f = self.tokenselect(x_ext, self.extra_score_predictor[1],
+            #                        self.prompt_disentangle2) if self.num_modals > 1 else x_ext[0]
+            x_f = self.fusion2(x_ext)
             for blk in self.block2:
                 x_cam, x_f = blk(x_cam, x_f, B, H, W)
             x2_cam = self.norm2(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
@@ -894,8 +903,9 @@ class CMNeXt(nn.Module):
         if self.num_modals > 0:
             x_ext, _, _ = self.extra_downsample_layers[2](x_ext)
             # x_f = self.tokenselect(x_ext, self.extra_score_predictor[2]) if self.num_modals > 1 else x_ext[0]
-            x_f = self.tokenselect(x_ext, self.extra_score_predictor[2],
-                                   self.prompt_disentangle3) if self.num_modals > 1 else x_ext[0]
+            # x_f = self.tokenselect(x_ext, self.extra_score_predictor[2],
+            #                        self.prompt_disentangle3) if self.num_modals > 1 else x_ext[0]
+            x_f = self.fusion3(x_ext)
             for blk in self.block3:
                 x_cam, x_f = blk(x_cam, x_f, B, H, W)
             x3_f = self.extra_norm3(x_f)
@@ -930,8 +940,9 @@ class CMNeXt(nn.Module):
         if self.num_modals > 0:
             x_ext, _, _ = self.extra_downsample_layers[3](x_ext)
             # x_f = self.tokenselect(x_ext, self.extra_score_predictor[3]) if self.num_modals > 1 else x_ext[0]
-            x_f = self.tokenselect(x_ext, self.extra_score_predictor[3],
-                                   self.prompt_disentangle4) if self.num_modals > 1 else x_ext[0]
+            # x_f = self.tokenselect(x_ext, self.extra_score_predictor[3],
+            #                        self.prompt_disentangle4) if self.num_modals > 1 else x_ext[0]
+            x_f = self.fusion4(x_ext)
             for blk in self.block4:
                 x_cam, x_f = blk(x_cam, x_f, B, H, W)
             x4_cam = self.norm4(x_cam).reshape(B, H, W, -1).permute(0, 3, 1, 2)
