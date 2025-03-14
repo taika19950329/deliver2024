@@ -58,12 +58,13 @@ EVAL:
 #  MODEL_PATH    : 'output/DELIVER_CMNeXt-B2_idel_MoE_20240731/CMNeXt_CMNeXt-B2_DELIVER_epoch172_62.96_checkpoint.pth'
 #  MODEL_PATH    : 'output/DELIVER_CMNeXt-B2_idel_mask_20241102/CMNeXt_CMNeXt-B2_DELIVER_epoch147_63.38.pth'
 #  MODEL_PATH    : 'output/DELIVER_CMNeXt-B2_idel_mask-biadpt_20241111/CMNeXt_CMNeXt-B2_DELIVER_epoch146_64.89.pth'
-  MODEL_PATH    : 'output/DELIVER_CMNeXt-B2_idel_mask-kalman_20250131/CMNeXt_CMNeXt-B2_DELIVER_epoch240_62.43_checkpoint.pth'
+#  MODEL_PATH    : 'output/DELIVER_CMNeXt-B2_idel_aptsfnew-kalman-dual-biapt-eth_20250219/CMNeXt_CMNeXt-B2_DELIVER_epoch207_66.17.pth'
+  MODEL_PATH    : 'output/DELIVER_CMNeXt-B2_idel_particle-mask-dual-biapt_20250227/CMNeXt_CMNeXt-B2_DELIVER_epoch101_64.47.pth'
   IMAGE_SIZE    : [1024, 1024]                            # evaluation image size in (h, w)
   BATCH_SIZE    : 1                                       # batch size used to train
   MSF: 
     ENABLE      : true                                   # multi-scale and flip evaluation
-    FLIP        : true                                    # use flip in evaluation  
+    FLIP        : false                                   # use flip in evaluation
     SCALES      : [0.5, 0.75, 1.0, 1.25, 1.5, 1.75]       # scales used in MSF evaluation                
 
 

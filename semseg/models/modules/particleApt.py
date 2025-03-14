@@ -3,7 +3,7 @@ from torch import nn, Tensor
 from torch.nn import functional as F
 import functools
 from torch.autograd import Variable
-from semseg.models.modules.biapter import Shared_direct_adapter as ShareApt
+# from semseg.models.modules.biapter import Shared_direct_adapter as ShareApt
 
 
 
@@ -31,7 +31,8 @@ def weighted_fusion_initialization(variances, epsilon=1e-6):
     return sigma_init_squared
 
 
-def particle_filter_fusion(means, variances, num_particles=2):
+def particle_filter_fusion(means, variances, mu_fused, sigma_fused_squared, noise_threshold,
+                                       num_particles=2):
     """
     使用粒子滤波对多个模态的特征进行融合。
 
@@ -98,6 +99,11 @@ def particle_filter_fusion(means, variances, num_particles=2):
     fused_mean = torch.sum(particles * weights, dim=0) / torch.sum(weights, dim=0)
     fused_variance = torch.sum(weights * (particles - fused_mean.unsqueeze(0)) ** 2, dim=0) / torch.sum(weights, dim=0)
 
+    outliers = torch.abs(fused_mean - mu_fused) > noise_threshold * torch.sqrt(sigma_fused_squared)
+    fused_mean = torch.where(outliers, mu_fused, fused_mean)
+    fused_variance = torch.where(outliers, sigma_fused_squared + epsilon, fused_variance)
+
+
     return fused_mean, fused_variance
 
 
@@ -150,13 +156,8 @@ class BiParticFusion(nn.Module):
 
         # GRU-like gates
 
-        # self.gateproj1 = ShareApt(inplanes)
-        # self.gateproj2 = ShareApt(inplanes)
         self.gateproj1 = GRUF2GateF1(inplanes, hide_channel)
         self.gateproj2 = GRUF2GateF1(inplanes, hide_channel)
-
-        # self.gateproj1 = GRUF2GateF1(inplanes, hide_channel)
-        # self.gateproj2 = GRUF2GateF1(inplanes, hide_channel)
 
         self.proj1 = nn.Linear(hide_channel, hide_channel)
         self.fcmean1 = nn.Linear(hide_channel, hide_channel)
@@ -239,14 +240,16 @@ class BiParticFusion(nn.Module):
         # Particle filter update
 
         sigma_fused_w = weighted_fusion_initialization(vars)
+        mu_w = weighted_fusion_initialization(means)
 
-        # mean = self.fuse_mean(mu_w)
+        mean = self.fuse_mean(mu_w)
         var = self.fuse_var(sigma_fused_w)
 
-        # noise_threshold = mean
+        noise_threshold = mean
+
 
         # fused_mean, fused_variance = kalman_fusion_feature_map(means, vars, mu_w, sigma_fused_w, noise_threshold)
-        fused_mean, fused_variance = particle_filter_fusion(means, vars)
+        fused_mean, fused_variance = particle_filter_fusion(means, vars, mu_w, sigma_fused_w, noise_threshold)
         # import pdb;
         # pdb.set_trace()
 
@@ -267,7 +270,7 @@ class BiParticFusion(nn.Module):
 if __name__ == "__main__":
     # 假设我们有两个模态的特征
 
-    device = torch.device('cuda')
+    device = torch.device('cpu')
     b, c, h, w = 4, 64, 32, 32  # 假设批次大小为4，通道数为64，图像尺寸为32x32
     num_particles = 100  # 粒子数目
 
@@ -285,6 +288,7 @@ if __name__ == "__main__":
     fuse1 = BiParticFusion(c, 8).to(device)
     fused = fuse1(feature_1_mean, feature_1_variance)
     print(fused.shape)
+    print(fused)
     raise Exception
 
     # 调用粒子滤波融合函数

@@ -11,7 +11,8 @@ from semseg.models.modules.ffm import ChannelEmbed
 from semseg.models.modules.mspa import MSPABlock
 from semseg.models.modules.biapter import Bi_direct_adapter, Shared_direct_adapter
 from semseg.utils.utils import nchw_to_nlc, nlc_to_nchw
-from semseg.models.modules.BasicBlock import TF_3D
+from semseg.models.modules.BasicBlockNewNew import TF_3D
+from semseg.models.modules.particleApt import BiParticFusion
 
 import torch.nn as nn
 import torch.autograd
@@ -248,7 +249,8 @@ class DualBlock(nn.Module):
         # self.fuse1 = BimodalFusion(dim)
         # self.fuse2 = BimodalFusion(dim)
         # self.fuse1 = FRM(dim=dim, reduction=1)
-        self.fuse1 = GRUKalmanFusion(dim, 8)
+        # self.fuse1 = GRUKalmanFusion(dim, 8)
+        self.fuse1 = BiParticFusion(dim, 8)
 
     def forward(self, x: Tensor, y: Tensor, B, H, W) -> Tensor:
         x = x + self.drop_path(self.attn(self.norm1(x), H, W))
@@ -274,11 +276,11 @@ class DualBlock(nn.Module):
             y = y + self.msp_drop_path(
                 self.msp_layer_scale_2.unsqueeze(-1).unsqueeze(-1) * self.msp_mlp(self.msp_norm2(y)))
 
-        # y = y.permute(0, 2, 3, 1).reshape(B, H * W, -1)
-        # fuse = self.fuse1(x, y)
-        # x = x + fuse
-        # y = y + fuse
-        # y = y.reshape(B, H, W, -1).permute(0, 3, 1, 2)
+        y = y.permute(0, 2, 3, 1).reshape(B, H * W, -1)
+        fuse = self.fuse1(x, y)
+        x = x + fuse
+        y = y + fuse
+        y = y.reshape(B, H, W, -1).permute(0, 3, 1, 2)
 
         return x, y
 
@@ -717,16 +719,16 @@ class CMNeXt(nn.Module):
         self.patch_embed3 = PatchEmbed(embed_dims[1], embed_dims[2], 3, 2, 3 // 2)
         self.patch_embed4 = PatchEmbed(embed_dims[2], embed_dims[3], 3, 2, 3 // 2)
 
-        self.prompt_disentangle1 = Disentangle(embed_dims[0])
-        self.prompt_disentangle2 = Disentangle(embed_dims[1])
-        self.prompt_disentangle3 = Disentangle(embed_dims[2])
-        self.prompt_disentangle4 = Disentangle(embed_dims[3])
+        # self.prompt_disentangle1 = Disentangle(embed_dims[0])
+        # self.prompt_disentangle2 = Disentangle(embed_dims[1])
+        # self.prompt_disentangle3 = Disentangle(embed_dims[2])
+        # self.prompt_disentangle4 = Disentangle(embed_dims[3])
 
         if self.num_modals > 0:
-            self.fusion1 = TF_3D(embedding_dim=64, volumn_size=256, nhead=4, method="TF")
-            self.fusion2 = TF_3D(embedding_dim=128, volumn_size=128, nhead=4, method="TF")
-            self.fusion3 = TF_3D(embedding_dim=320, volumn_size=64, nhead=4, method="TF")
-            self.fusion4 = TF_3D(embedding_dim=512, volumn_size=32, nhead=4, method="TF")
+            self.fusion1 = TF_3D(embedding_dim=64, patch_dim=8, nhead=4, method="TF")
+            self.fusion2 = TF_3D(embedding_dim=128, patch_dim=8, nhead=4, method="TF")
+            self.fusion3 = TF_3D(embedding_dim=320, patch_dim=8, nhead=4, method="TF")
+            self.fusion4 = TF_3D(embedding_dim=512, patch_dim=8, nhead=4, method="TF")
 
         if self.num_modals > 0:
             self.extra_downsample_layers = nn.ModuleList([

@@ -30,7 +30,6 @@ class UNetEncoder(nn.Module):
 
             in_features = out_features
 
-
     def forward(self, inputs):
         encoder_outputs = []
         outputs = inputs
@@ -46,6 +45,7 @@ class UNetEncoder(nn.Module):
             outputs = getattr(self.features, 'pool%d' % (i+1))(outputs)
 
         return encoder_outputs, outputs
+
 
 class UNetEncoder_hved(nn.Module):
     def __init__(self, in_channels=1, feature_maps=64, levels=4, norm_type='instance', use_dropout=True, bias=True):
@@ -71,7 +71,6 @@ class UNetEncoder_hved(nn.Module):
 
             in_features = out_features
 
-
     def forward(self, inputs):
         encoder_outputs = []
         outputs = inputs
@@ -88,6 +87,7 @@ class UNetEncoder_hved(nn.Module):
 
         return encoder_outputs, outputs
 
+
 class UNetDecoder(nn.Module):
     def __init__(self, out_channels, feature_maps=64, levels=4, norm_type='instance', bias=True):
         super(UNetDecoder, self).__init__()
@@ -97,13 +97,13 @@ class UNetDecoder(nn.Module):
         self.features = nn.Sequential()
 
         for i in range(levels-1):
-            upconv = UNetUpSamplingBlock3D(2**(levels-i-1) * feature_maps, 2**(levels-i-1) * feature_maps, deconv=False,
-                                         bias=bias)
+            upconv = UNetUpSamplingBlock3D(2**(levels-i-1) * feature_maps, 2**(levels-i-1) * feature_maps,
+                                           deconv=False, bias=bias)
             self.features.add_module('upconv%d' % (i+1), upconv)
 
-            conv_block = UNetConvBlock3D(2**(levels-i-2) * feature_maps * 3, 2**(levels-i-2) * feature_maps,
-                                           norm_type=norm_type, bias=bias, flag='decoder')
-
+            conv_block = UNetConvBlock3D(2**(levels-i-2) * feature_maps * 3,
+                                         2**(levels-i-2) * feature_maps,
+                                         norm_type=norm_type, bias=bias, flag='decoder')
             self.features.add_module('convblock%d' % (i+1), conv_block)
 
         self.score = nn.Conv3d(feature_maps, out_channels, kernel_size=1, stride=1, bias=bias)
@@ -117,6 +117,7 @@ class UNetDecoder(nn.Module):
             outputs = getattr(self.features, 'convblock%d' % (i+1))(outputs)
         encoder_outputs.reverse()
         return self.score(outputs)
+
 
 class UNetDecoder_hved(nn.Module):
     def __init__(self, out_channels, feature_maps=64, levels=4, norm_type='instance', bias=True):
@@ -127,13 +128,13 @@ class UNetDecoder_hved(nn.Module):
         self.features = nn.Sequential()
 
         for i in range(levels-1):
-            upconv = UNetUpSamplingBlock3D(2**(levels-i-1) * feature_maps, 2**(levels-i-1) * feature_maps, deconv=False,
-                                         bias=bias)
+            upconv = UNetUpSamplingBlock3D(2**(levels-i-1) * feature_maps,
+                                           2**(levels-i-1) * feature_maps, deconv=False, bias=bias)
             self.features.add_module('upconv%d' % (i+1), upconv)
 
-            conv_block = UNetConvBlock3D_hved(2**(levels-i-2) * feature_maps * 3, 2**(levels-i-2) * feature_maps,
-                                           norm_type=norm_type, bias=bias, flag='decoder')
-
+            conv_block = UNetConvBlock3D_hved(2**(levels-i-2) * feature_maps * 3,
+                                              2**(levels-i-2) * feature_maps,
+                                              norm_type=norm_type, bias=bias, flag='decoder')
             self.features.add_module('convblock%d' % (i+1), conv_block)
 
         self.score = nn.Conv3d(feature_maps, out_channels, kernel_size=1, stride=1, bias=bias)
@@ -147,6 +148,7 @@ class UNetDecoder_hved(nn.Module):
             outputs = getattr(self.features, 'convblock%d' % (i+1))(outputs)
         encoder_outputs.reverse()
         return self.score(outputs)
+
 
 class UNetUpSamplingBlock3D(nn.Module):
     def __init__(self, in_channels, out_channels, deconv=False, bias=True):
@@ -169,70 +171,77 @@ class UNetUpSamplingBlock3D(nn.Module):
     def forward_standard(self, inputs):
         return self.up(inputs)
 
+
 class UNetConvBlock3D(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, padding='SAME', norm_type='instance', bias=True, flag='encoder'):
+    def __init__(self, in_channels, out_channels, kernel_size=3,
+                 padding='SAME', norm_type='instance', bias=True, flag='encoder'):
         super(UNetConvBlock3D, self).__init__()
-        if flag=='encoder':
-            self.conv1 = ConvNormRelu3D(in_channels, out_channels//2, kernel_size=kernel_size, padding=padding,
-                                      norm_type=norm_type, bias=bias)
-            self.conv2 = ConvNormRelu3D(out_channels//2, out_channels, kernel_size=kernel_size, padding=padding,
-                                      norm_type=norm_type, bias=bias)
-        else:
-            self.conv1 = ConvNormRelu3D(in_channels, out_channels, kernel_size=kernel_size, padding=padding,
+        if flag == 'encoder':
+            self.conv1 = ConvNormRelu3D(in_channels, out_channels//2,
+                                        kernel_size=kernel_size, padding=padding,
                                         norm_type=norm_type, bias=bias)
-            self.conv2 = ConvNormRelu3D(out_channels, out_channels, kernel_size=kernel_size, padding=padding,
+            self.conv2 = ConvNormRelu3D(out_channels//2, out_channels,
+                                        kernel_size=kernel_size, padding=padding,
+                                        norm_type=norm_type, bias=bias)
+        else:
+            self.conv1 = ConvNormRelu3D(in_channels, out_channels,
+                                        kernel_size=kernel_size, padding=padding,
+                                        norm_type=norm_type, bias=bias)
+            self.conv2 = ConvNormRelu3D(out_channels, out_channels,
+                                        kernel_size=kernel_size, padding=padding,
                                         norm_type=norm_type, bias=bias)
 
     def forward(self, inputs):
         outputs = self.conv1(inputs)
         outputs = self.conv2(outputs)
         return outputs
+
 
 class UNetConvBlock3D_hved(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, padding='SAME', norm_type='instance', bias=True, flag='encoder'):
+    def __init__(self, in_channels, out_channels, kernel_size=3,
+                 padding='SAME', norm_type='instance', bias=True, flag='encoder'):
         super(UNetConvBlock3D_hved, self).__init__()
-        if flag=='encoder':
-            self.conv1 = NormRelu3DConv(in_channels, out_channels//2, kernel_size=kernel_size, padding=padding,
-                                      norm_type=norm_type, bias=bias)
-            self.conv2 = NormRelu3DConv(out_channels//2, out_channels, kernel_size=kernel_size, padding=padding,
-                                      norm_type=norm_type, bias=bias)
+        if flag == 'encoder':
+            self.conv1 = NormRelu3DConv(in_channels, out_channels//2, kernel_size=kernel_size,
+                                        padding=padding, norm_type=norm_type, bias=bias)
+            self.conv2 = NormRelu3DConv(out_channels//2, out_channels, kernel_size=kernel_size,
+                                        padding=padding, norm_type=norm_type, bias=bias)
         else:
-            self.conv1 = NormRelu3DConv(in_channels, out_channels, kernel_size=kernel_size, padding=padding,
-                                        norm_type=norm_type, bias=bias)
-            self.conv2 = NormRelu3DConv(out_channels, out_channels, kernel_size=kernel_size, padding=padding,
-                                        norm_type=norm_type, bias=bias)
+            self.conv1 = NormRelu3DConv(in_channels, out_channels, kernel_size=kernel_size,
+                                        padding=padding, norm_type=norm_type, bias=bias)
+            self.conv2 = NormRelu3DConv(out_channels, out_channels, kernel_size=kernel_size,
+                                        padding=padding, norm_type=norm_type, bias=bias)
 
     def forward(self, inputs):
         outputs = self.conv1(inputs)
         outputs = self.conv2(outputs)
         return outputs
+
 
 class ConvNormRelu3D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1,
                  padding='SAME', bias=True, dilation=1, norm_type='instance'):
-
         super(ConvNormRelu3D, self).__init__()
         norm = nn.BatchNorm3d if norm_type == 'batch' else nn.InstanceNorm3d
-        if padding == 'same':
-            p = padding
-        elif padding == 'SAME':
+        if padding == 'same' or padding == 'SAME':
             p = kernel_size // 2
         else:
             p = 0
 
-
-        self.unit = nn.Sequential(nn.Conv3d(in_channels, out_channels, kernel_size=kernel_size,
-                                            padding=p, stride=stride, bias=bias, dilation=dilation),
-                                  norm(out_channels),
-                                  nn.LeakyReLU(0.01, inplace=True))
+        self.unit = nn.Sequential(
+            nn.Conv3d(in_channels, out_channels, kernel_size=kernel_size,
+                      padding=p, stride=stride, bias=bias, dilation=dilation),
+            norm(out_channels),
+            nn.LeakyReLU(0.01, inplace=True)
+        )
 
     def forward(self, inputs):
         return self.unit(inputs)
 
+
 class NormRelu3DConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1,
                  padding='SAME', bias=True, dilation=1, norm_type='instance'):
-
         super(NormRelu3DConv, self).__init__()
         norm = nn.BatchNorm3d if norm_type == 'batch' else nn.InstanceNorm3d
         if padding == 'SAME':
@@ -243,109 +252,179 @@ class NormRelu3DConv(nn.Module):
         self.unit = nn.Sequential(
             norm(in_channels),
             nn.LeakyReLU(0.01, inplace=True),
-            nn.Conv3d(in_channels, out_channels, kernel_size=kernel_size, padding=p, stride=stride, bias=bias, dilation=dilation)
+            nn.Conv3d(in_channels, out_channels, kernel_size=kernel_size,
+                      padding=p, stride=stride, bias=bias, dilation=dilation)
         )
-
-    def getpre_n(self, pre):
-        re = {}
-        p = pre.flatten()
-        print(pre.shape)
-        for i in range(len(p)):
-            n = int(abs(p[i]))
-            if n in re.keys():
-                re[n] += 1
-            else:
-                re[n] = 1
-        print(re)
 
     def forward(self, inputs):
         return self.unit(inputs)
 
 # ****************************************************************************************
-# ------------------------------ TFusion Basic blocks  ----------------------------------
+# ------------------------------ 动态生成位置编码 (改造后)  ------------------------------
+# ****************************************************************************************
+class DynamicPositionalEncoding(nn.Module):
+    """
+    动态生成正余弦位置编码，可选缓存以避免重复计算。
+    """
+    def __init__(self, d_hid, use_cache=True):
+        super().__init__()
+        self.d_hid = d_hid
+        self.use_cache = use_cache
+        if self.use_cache:
+            self._pe_cache = {}
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        :param x: shape = (B, N, d_hid)
+        :return: x + PE, 其中 PE.shape=(1,N,d_hid)
+        """
+        B, N, C = x.shape
+        assert C == self.d_hid, f"输入通道维度 {C} 与 d_hid={self.d_hid} 不匹配!"
+
+        if self.use_cache and (N in self._pe_cache):
+            pos_table = self._pe_cache[N]
+        else:
+            pos_table = self._build_position_encoding(N, C, x.device)
+            if self.use_cache:
+                self._pe_cache[N] = pos_table
+        # 叠加位置编码
+        return x + pos_table
+
+    def _build_position_encoding(self, n_position, d_hid, device):
+        """
+        生成 (1, n_position, d_hid) 大小的正余弦位置编码
+        """
+        pos = torch.arange(n_position, dtype=torch.float, device=device).unsqueeze(1)  # (N,1)
+        dim_i = torch.arange(d_hid, dtype=torch.float, device=device).unsqueeze(0)     # (1,C)
+
+        # 计算缩放项
+        div_term = torch.exp((2 * (dim_i // 2)) * (-torch.log(torch.tensor(10000.0)) / d_hid))
+        angle = pos * div_term  # 广播 => (N,C)
+
+        pe = torch.zeros((n_position, d_hid), device=device)
+        pe[:, 0::2] = torch.sin(angle[:, 0::2])
+        pe[:, 1::2] = torch.cos(angle[:, 1::2])
+
+        return pe.unsqueeze(0)  # (1,N,C)
+
+# ****************************************************************************************
+# ------------------------------ 改造后的 TF_3D 模块 (固定patch)  ----------------------
 # ****************************************************************************************
 
 class TF_3D(nn.Module):
-    def __init__(self, embedding_dim=1024, volumn_size=8, nhead=4, num_layers=8, method='TF'):
+    """
+    通过固定 patch_size，强行把输入特征缩放到 (patch_size, patch_size)，
+    从而保证 token 数不随图像分辨率增长，大幅减少内存占用。
+    """
+    def __init__(self,
+                 embedding_dim=1024,
+                 nhead=4,
+                 num_layers=8,
+                 method='TF',
+                 patch_size=8  # 新增参数, 默认为 8 或 16
+                 ):
         super(TF_3D, self).__init__()
         self.embedding_dim = embedding_dim
-        self.d_model = self.embedding_dim
-        self.patch_dim = 8
+        self.d_model = embedding_dim
         self.method = method
-        self.scale_factor = volumn_size // self.patch_dim
 
-        encoder_layer = nn.TransformerEncoderLayer(d_model=self.d_model, nhead=nhead,
-                                                   batch_first=True, dim_feedforward=self.d_model * 4)
+        # 重要：固定 patch_size
+        self.patch_size = patch_size
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=self.d_model,
+            nhead=nhead,
+            batch_first=True,
+            dim_feedforward=self.d_model * 4
+        )
         self.fusion_block = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
         self.dropout = nn.Dropout(p=0.1)
-        # self.avgpool = nn.AdaptiveAvgPool3d((self.patch_dim, self.patch_dim, self.patch_dim))
-        self.avgpool = nn.AdaptiveAvgPool2d((self.patch_dim, self.patch_dim))
-        # self.upsample = DUpsampling3D(self.embedding_dim, self.scale_factor)
-        self.upsample = DUpsampling2D(self.embedding_dim, self.scale_factor)
-        if method=='Token':
-            self.fusion_token = nn.parameter.Parameter(torch.zeros((1, self.patch_dim ** 3, self.d_model)))
+        # 动态位置编码
+        self.pos_enc = DynamicPositionalEncoding(d_hid=self.d_model, use_cache=True)
+
+        # 如果有 Token 需求，可在这里添加
+        if method == 'Token':
+            # 示例：一个 learnable token
+            self.fusion_token = nn.Parameter(torch.zeros(1, 1, self.d_model))
 
     def forward(self, all_content):
+        """
+        :param all_content: list of features, 每个 shape=(B, C, H, W)，C 要与 embedding_dim 相同，
+                            或者可在此内部用1x1 conv统一到embedding_dim。
+        :return: 融合后的特征 (B, C, H, W)。
+        """
+        if not all_content:
+            raise ValueError("all_content 为空，至少传1个特征")
 
+        # ---------- 1. 固定下采样到 (self.patch_size, self.patch_size) ----------
+        # 不再根据输入H,W自动计算，而是统一到 patch_size x patch_size
+        # 这样 token 的数量 = patch_size * patch_size，对大图来说节省大量内存。
+        patchH = self.patch_size
+        patchW = self.patch_size
+
+        # ---------- 2. pooling -> flatten(token) ----------
+        token_seq = []
+        B, _, inH, inW = all_content[0].shape  # 仅用来获取 batch 大小
+        for feat in all_content:
+            # 如果通道 != embedding_dim，需要1x1 conv
+            if feat.shape[1] != self.embedding_dim:
+                conv_1x1 = nn.Conv2d(feat.shape[1], self.embedding_dim, kernel_size=1).to(feat.device)
+                feat = conv_1x1(feat)
+
+            # 无论输入多大，都下采样到 (patchH, patchW)
+            pooled = F.adaptive_avg_pool2d(feat, (patchH, patchW))
+            # => (B, embedding_dim, patchH, patchW) => (B, patchH*patchW, embedding_dim)
+            pooled = pooled.flatten(start_dim=2).transpose(1, 2).contiguous()
+            token_seq.append(pooled)
+
+        # 多模态拼接 => (B, sum_of_patches, embedding_dim)
+        token_seq = torch.cat(token_seq, dim=1)
+
+        # 如果 method='Token' 且有 learnable token
+        if self.method == 'Token':
+            Bsz = token_seq.size(0)
+            fused_token = self.fusion_token.expand(Bsz, -1, -1)  # (B,1,embedding_dim)
+            token_seq = torch.cat([fused_token, token_seq], dim=1)
+
+        # ---------- 3. 送进 Transformer ----------
+        x = self.fusion_block(self.dropout(self.pos_enc(token_seq)))
+        # x.shape = (B, N, embedding_dim)
+
+        # 如果插入了 Token，需要拆分
+        if self.method == 'Token':
+            x_patch = x[:, 1:, :]
+        else:
+            x_patch = x
+
+        # ---------- 4. 拆分回各模态 + 上采样到原分辨率 + 做 softmax 融合 ----------
         n_modality = len(all_content)
-        token_content = self.project(all_content)
-        position_enc = PositionalEncoding(self.d_model, token_content.size(1))
-        out = self.fusion_block(self.dropout(position_enc(token_content)))
-        atten_map = self.reproject(out, n_modality, self.method)
-        res = self.atten(all_content, atten_map, n_modality)
+        patch_per_mod = patchH * patchW
+        out_list = []
+        idx_start = 0
 
-        return res
-
-    def project(self, all_content):
-        n_modality = len(all_content)
-        token_content_in = None
         for i in range(n_modality):
-            content = self.avgpool(all_content[i])
-            content = content.permute(0, 2, 3, 1).contiguous()
-            content2 = content.view(content.size(0), -1, self.embedding_dim)
+            chunk = x_patch[:, idx_start : idx_start + patch_per_mod, :]
+            idx_start += patch_per_mod
+            chunk = chunk.transpose(1, 2).contiguous().view(B, self.embedding_dim, patchH, patchW)
 
-            if i == 0:
-                token_content_in = content2
-            else:
-                token_content_in = torch.cat([token_content_in, content2], dim=1)
+            # 上采样回 original (inH, inW)
+            # 这里假定 all_content 的 i-th 特征图大小都是 inH, inW，如果它们各不相同，需要自行处理
+            chunk_up = F.interpolate(chunk, size=(inH, inW), mode='bilinear', align_corners=False)
+            out_list.append(chunk_up)
 
-        return token_content_in
+        # 做 softmax 注意力加权 (可按需改写)
+        stack = torch.stack(out_list, dim=0)  # (n_modality, B, C, H, W)
+        attn_map = F.softmax(stack, dim=0)    # (n_modality, B, C, H, W)
 
-    def reproject(self, atten_map, n_modality, method):
-        n_patch = self.patch_dim ** 2
-        a_m0 = None
+        fused_output = None
         for i in range(n_modality):
-            atten_mapi = atten_map[:, n_patch*i : n_patch*(i+1), :].view(
-                    atten_map.size(0),
-                    self.patch_dim,
-                    self.patch_dim,
-                    self.embedding_dim,
-                )
-            atten_mapi = atten_mapi.permute(0, 3, 1, 2).contiguous()
-            atten_mapi = self.upsample(atten_mapi).unsqueeze(dim=0)
-
-            if a_m0 == None:
-                a_m0 = atten_mapi
+            if fused_output is None:
+                fused_output = all_content[i] * attn_map[i]
             else:
-                a_m0 = torch.cat([a_m0, atten_mapi], dim=0)
+                fused_output += all_content[i] * attn_map[i]
 
-        a_m = F.softmax(a_m0, dim=0)
-        return a_m
-
-    def atten(self, all_content, atten_map, n_modality):
-        output = None
-        for i in range(n_modality):
-            a_m = atten_map[i, :, :, :, :]
-            _, _, h, w = a_m.shape
-            # if all_content[i].shape != a_m.shape:
-            #     all_content[i] = F.interpolate(all_content[i], size=(h, w), mode='bilinear', align_corners=False)
-            assert all_content[i].shape == a_m.shape, 'all_content and a_m cannot match!!'
-            if output == None:
-                output = all_content[i] * a_m
-            else:
-                output += all_content[i] * a_m
-        return output
+        return fused_output
 
 
 class DUpsampling3D(nn.Module):
@@ -358,23 +437,14 @@ class DUpsampling3D(nn.Module):
     def forward(self, x):
         x = self.conv_3d(x)
         B, C, D, H, W = x.size()
-
         x_permuted = x.permute(0, 4, 3, 2, 1)
-
-        x_permuted = x_permuted.contiguous().view((B, W, H, D * self.scale, int(C / (self.scale))))
-
+        x_permuted = x_permuted.contiguous().view((B, W, H, D * self.scale, int(C / self.scale)))
         x_permuted = x_permuted.permute(0, 3, 1, 2, 4)
-
-
         x_permuted = x_permuted.contiguous().view((B, D * self.scale, W, H * self.scale, int(C / (self.scale**2))))
-
         x_permuted = x_permuted.permute(0, 1, 3, 2, 4)
-
         x_permuted = x_permuted.contiguous().view(
             (B, D * self.scale, H * self.scale, W * self.scale, int(C / (self.scale **3))))
-
         x = x_permuted.permute(0, 4, 1, 2, 3)
-
         return x
 
 
@@ -388,41 +458,14 @@ class DUpsampling2D(nn.Module):
     def forward(self, x):
         x = self.conv_2d(x)
         B, C, H, W = x.size()
-
         # First permutation and view to scale height
-        x_permuted = x.permute(0, 2, 3, 1).contiguous().view(B, H, W * self.scale, int(C / self.scale))
-
+        x_permuted = x.permute(0, 2, 3, 1).contiguous().view(B, H, W*self.scale, int(C / self.scale))
         # Second permutation and view to scale width
-        x_permuted = x_permuted.permute(0, 1, 3, 2).contiguous().view(B, H * self.scale, W * self.scale,
-                                                                      int(C / (self.scale ** 2)))
-
-        # Final permutation to restore the channel as the second dimension
+        x_permuted = x_permuted.permute(0, 1, 3, 2).contiguous().view(B, H*self.scale, W*self.scale,
+                                                                      int(C / (self.scale**2)))
+        # Final permutation
         x = x_permuted.permute(0, 3, 1, 2)
-
         return x
-
-
-class PositionalEncoding(nn.Module):
-
-    def __init__(self, d_hid, n_position=200):
-        super(PositionalEncoding, self).__init__()
-
-        self.register_buffer('pos_table', self._get_sinusoid_encoding_table(n_position, d_hid))
-
-    def _get_sinusoid_encoding_table(self, n_position, d_hid):
-
-        def get_position_angle_vec(position):
-            return [position / np.power(10000, 2 * (hid_j // 2) / d_hid) for hid_j in range(d_hid)]
-
-        sinusoid_table = np.array([get_position_angle_vec(pos_i) for pos_i in range(n_position)])
-        sinusoid_table[:, 0::2] = np.sin(sinusoid_table[:, 0::2])
-        sinusoid_table[:, 1::2] = np.cos(sinusoid_table[:, 1::2])
-
-        return torch.FloatTensor(sinusoid_table).unsqueeze(0)
-
-    def forward(self, x):
-        return x + self.pos_table[:, :x.size(1)].clone().detach().to(torch.device('cuda'))
-
 
 # ****************************************************************************************
 # ------------------------------------ rmbts basic blocks  ------------------------------
@@ -443,19 +486,22 @@ class general_conv3d(nn.Module):
         if norm_type:
             self.unit.add_module('norm', nn.InstanceNorm3d(out_channels))
         if act:
-            self.unit.add_module('activation',nn.LeakyReLU(0.01, inplace=True))
+            self.unit.add_module('activation', nn.LeakyReLU(0.01, inplace=True))
 
     def forward(self, inputs):
         return self.unit(inputs)
+
 
 class linear(nn.Module):
     def __init__(self, units):
-
         super(linear, self).__init__()
-        self.unit = nn.Sequential(nn.Flatten(),
-                                  nn.LazyLinear(units))
+        self.unit = nn.Sequential(
+            nn.Flatten(),
+            nn.LazyLinear(units)
+        )
     def forward(self, inputs):
         return self.unit(inputs)
+
 
 class style_encoder(nn.Module):
     def __init__(self, in_channels, n_base_ch_se=32):
@@ -494,10 +540,10 @@ class content_encoder(nn.Module):
         self.unit3_0 = general_conv3d(n_base_filters*2, n_base_filters*4, stride=2)
         self.unit3 = nn.Sequential(
             general_conv3d(n_base_filters*4, n_base_filters*4, dropout=0.3),
-            general_conv3d(n_base_filters*4, n_base_filters*4 ),
+            general_conv3d(n_base_filters*4, n_base_filters*4),
         )
 
-        self.unit4_0 = general_conv3d(n_base_filters * 4, n_base_filters*8, stride=2)
+        self.unit4_0 = general_conv3d(n_base_filters*4, n_base_filters*8, stride=2)
         self.unit4 = nn.Sequential(
             general_conv3d(n_base_filters*8, n_base_filters * 8, dropout=0.3),
             general_conv3d(n_base_filters * 8, n_base_filters * 8),
@@ -522,6 +568,7 @@ class content_encoder(nn.Module):
             's3': output3,
             's4': output4,
         }
+
 
 class image_decoder(nn.Module):
     def __init__(self, input_channel, mlp_ch=128, img_ch=1, scale=4):
@@ -550,7 +597,6 @@ class image_decoder(nn.Module):
             in_channel = out_channel
         self.conv_final = general_conv3d(out_channel, img_ch, kernel_size=7, stride=1)
 
-
     def forward(self, style, content):
         mu, sigma = self.mlp(style)
         x = self.ar1(content, mu, sigma)
@@ -565,8 +611,8 @@ class image_decoder(nn.Module):
             x = self.lrelu(x)
 
         x = self.conv_final(x)
-
         return x, mu, sigma
+
 
 class mask_decoder(nn.Module):
     def __init__(self, input_channel, n_base_filters=16, num_cls=4):
@@ -591,7 +637,6 @@ class mask_decoder(nn.Module):
 
         self.conv_seg = general_conv3d(in_channel, num_cls, kernel_size=1, norm_type=False, act=False)
 
-
     def forward(self, inp):
         input = [inp['e4_out'], inp['e3_out'], inp['e2_out'], inp['e1_out']]
 
@@ -600,22 +645,19 @@ class mask_decoder(nn.Module):
             out = getattr(self.features, 'upblock%d' % (i + 1))(out)
             out = getattr(self.features, 'convblock1%d' % (i + 1))(out)
             out = torch.cat([out, input[i+1]], dim=1)
-            out = getattr(self.features, 'convblock2%d' % (i + 1))(out)
-            out = getattr(self.features, 'convblock3%d' % (i + 1))(out)
+            out = getattr(self.features, 'convblock2%d' % (i+1))(out)
+            out = getattr(self.features, 'convblock3%d' % (i+1))(out)
         seg = self.conv_seg(out)
 
         return seg
 
 
-
-
 class adaptive_resblock(nn.Module):
-    def __init__(self,input_channel, channel):
+    def __init__(self, input_channel, channel):
         super(adaptive_resblock, self).__init__()
         self.conv1 = general_conv3d(input_channel, channel)
         self.lrelu = nn.LeakyReLU(0.01)
         self.conv2 = general_conv3d(channel, channel)
-
 
     def forward(self, x_init, mu, sigma):
         x = self.adaptive_instance_norm(self.conv1(x_init), mu, sigma)
@@ -623,11 +665,11 @@ class adaptive_resblock(nn.Module):
         x = self.adaptive_instance_norm(self.conv2(x), mu, sigma)
         return x + x_init
 
-
     def adaptive_instance_norm(self, content, gamma, beta):
         c_mean = torch.mean(content, dim=(2, 3, 4), keepdim=True)
         c_std = torch.std(content, dim=(2, 3, 4), keepdim=True)
-        return gamma * ((content - c_mean) / c_std) + beta
+        return gamma * ((content - c_mean) / (c_std + 1e-5)) + beta
+
 
 class mlp(nn.Module):
     def __init__(self, channel):
@@ -660,10 +702,10 @@ class ResDilBlock3D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, norm_type='instance', bias=True, flag='encoder'):
         super(ResDilBlock3D, self).__init__()
 
-        self.conv1 = ConvNormRelu3D(in_channels, out_channels, kernel_size=kernel_size, padding='same',
-                                      norm_type=norm_type, dilation=2, bias=bias)
-        self.conv2 = ConvNormRelu3D(out_channels, out_channels, kernel_size=kernel_size, padding='same',
-                                      norm_type=norm_type, dilation=4, bias=bias)
+        self.conv1 = ConvNormRelu3D(in_channels, out_channels, kernel_size=kernel_size,
+                                    padding='same', norm_type=norm_type, dilation=2, bias=bias)
+        self.conv2 = ConvNormRelu3D(out_channels, out_channels, kernel_size=kernel_size,
+                                    padding='same', norm_type=norm_type, dilation=4, bias=bias)
         self.relu = nn.LeakyReLU(0.01, inplace=True)
 
     def forward(self, inputs):
@@ -699,7 +741,6 @@ class LMCREncoder(nn.Module):
 
             in_features = out_features
 
-
     def forward(self, inputs):
         encoder_outputs = []
         outputs = inputs
@@ -728,22 +769,23 @@ class LMCRDecoder(nn.Module):
         self.features = nn.Sequential()
 
         for i in range(levels-1):
-            upconv = UNetUpSamplingBlock3D(2**(levels-i-1) * feature_maps, 2**(levels-i-1) * feature_maps, deconv=False,
-                                         bias=bias)
+            upconv = UNetUpSamplingBlock3D(2**(levels-i-1) * feature_maps,
+                                           2**(levels-i-1) * feature_maps, deconv=False, bias=bias)
             self.features.add_module('upconv%d' % (i+1), upconv)
 
-            conv_block = ConvNormRelu3D(2**(levels-i-2) * feature_maps * 3, 2**(levels-i-2) * feature_maps, norm_type=norm_type, bias=bias)
+            conv_block = ConvNormRelu3D(2**(levels-i-2) * feature_maps * 3,
+                                        2**(levels-i-2) * feature_maps, norm_type=norm_type, bias=bias)
             self.features.add_module('convblock%d' % (i+1), conv_block)
 
-            resdil_block = ResDilBlock3D(2**(levels-i-2) * feature_maps, 2**(levels-i-2) * feature_maps, norm_type=norm_type, bias=bias)
+            resdil_block = ResDilBlock3D(2**(levels-i-2) * feature_maps,
+                                         2**(levels-i-2) * feature_maps, norm_type=norm_type, bias=bias)
             self.features.add_module('resdilblock%d' % (i+1), resdil_block)
 
             if self.type=='seg':
                 conv = nn.Conv3d(2**(levels-i-2) * feature_maps, out_channels, kernel_size=1, stride=1, bias=bias)
                 self.features.add_module('conv%d' % (i + 1), conv)
-                up = UNetUpSamplingBlock3D(2 ** (levels - i - 1) * feature_maps, 2 ** (levels - i - 1) * feature_maps,
-                                           deconv=False,
-                                           bias=bias)
+                up = UNetUpSamplingBlock3D(2 ** (levels - i - 1) * feature_maps,
+                                           2 ** (levels - i - 1) * feature_maps, deconv=False, bias=bias)
                 self.features.add_module('up%d' % (i + 1), up)
         self.score = nn.Conv3d(feature_maps, out_channels, kernel_size=1, stride=1, bias=bias)
 
@@ -765,10 +807,11 @@ class LMCRDecoder(nn.Module):
                 deep_outputs = getattr(self.features, 'up%d' % (i+1))(deep_outputs)
 
         encoder_outputs.reverse()
-        if type == 'seg':
+        if self.type == 'seg':
             return deep_outputs + self.score(outputs)
         else:
             return self.score(outputs)
+
 
 class MPE(nn.Module):
     def __init__(self, channels):
@@ -781,7 +824,7 @@ class MPE(nn.Module):
         )
 
     def forward(self, data):
-        output = self.pool(data).view(data.size(0),-1)
+        output = self.pool(data).view(data.size(0), -1)
         output = self.unit(output)
         return output
 
@@ -795,9 +838,9 @@ class CR(nn.Module):
         outputs = []
 
         f0 = self.MPE(inputs[0])
-        outputs.append(f0[0][0]+
-                       f0[0][1]*inputs[1]+
-                       f0[0][2]*inputs[2]+
+        outputs.append(f0[0][0] +
+                       f0[0][1]*inputs[1] +
+                       f0[0][2]*inputs[2] +
                        f0[0][3]*inputs[3])
 
         f1 = self.MPE(inputs[1])
@@ -816,8 +859,9 @@ class CR(nn.Module):
         outputs.append(f3[0][0] * inputs[0] +
                        f3[0][1] * inputs[1] +
                        f3[0][2] * inputs[2] +
-                       f3[0][3] )
+                       f3[0][3])
         return outputs
+
 
 class LMCR_Fusion(nn.Module):
     def __init__(self, channels):
@@ -830,15 +874,46 @@ class LMCR_Fusion(nn.Module):
         )
         self.sa = nn.Conv3d(channels*4, 1, kernel_size=1, stride=1)
         self.conv = nn.Conv3d(channels*4, channels, kernel_size=1, stride=1)
-    def forward(self, inputs):
-        input = None
-        for i in range(len(inputs)):
-            if input is None:
-                input = inputs[i]
-            else:
-                input = torch.cat([input, inputs[i]],dim=1)
 
-        ca_map = torch.sigmoid(self.ca(self.pool(input).view(input.size(0),-1)))
+    def forward(self, inputs):
+        input_cat = None
+        for i in range(len(inputs)):
+            if input_cat is None:
+                input_cat = inputs[i]
+            else:
+                input_cat = torch.cat([input_cat, inputs[i]], dim=1)
+
+        ca_map = torch.sigmoid(self.ca(self.pool(input_cat).view(input_cat.size(0), -1)))
         ca_map = ca_map.unsqueeze(dim=-1).unsqueeze(dim=-1).unsqueeze(dim=-1)
-        sa_map = torch.sigmoid(self.sa(input))
-        return self.conv(input*ca_map+input*sa_map)
+        sa_map = torch.sigmoid(self.sa(input_cat))
+        return self.conv(input_cat * ca_map + input_cat * sa_map)
+
+
+# -----------------------------------------------------------------------------------------
+#  下面给一个示例 main 函数，演示如何调用改造后的 TF_3D（固定patch）
+# -----------------------------------------------------------------------------------------
+def main():
+    # 假设我们有 2 个模态或 2 路特征，各自 shape = (B, C, H, W)
+    B, C, H, W = 2, 64, 64, 64
+    B1, C1, H1, W1 = 2, 64, 384, 384
+    feat1 = torch.randn(B, C, H, W)
+    feat2 = torch.randn(B, C, H, W)
+    feat3 = torch.randn(B1, C1, H1, W1)
+    feat4 = torch.randn(B1, C1, H1, W1)
+
+    # 创建改造后的 TF_3D（固定patch_size=8, embedding_dim=64）
+    tf = TF_3D(embedding_dim=64, nhead=4, method='TF', patch_size=8)
+
+    # 前向 (第1组特征)
+    fused_feat = tf([feat1, feat2])
+    print("Input shape:", feat1.shape, "and", feat2.shape)
+    print("Output shape:", fused_feat.shape)  # => (B, C, H, W)
+
+    # 前向 (第2组特征)
+    fused_feat1 = tf([feat3, feat4])
+    print("Input shape:", feat3.shape, "and", feat4.shape)
+    print("Output shape:", fused_feat1.shape)
+
+
+if __name__ == '__main__':
+    main()
